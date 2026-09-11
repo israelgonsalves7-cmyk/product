@@ -47,7 +47,8 @@ def criar_banco():
             sysvet_erro INTEGER DEFAULT 0,
             sysvet_exito INTEGER DEFAULT 0,
             faturado INTEGER DEFAULT 0,
-            auditoria INTEGER DEFAULT 0
+            auditoria INTEGER DEFAULT 0,
+            observacao TEXT
         )
     """)
 
@@ -68,6 +69,11 @@ def criar_banco():
 
     try:
         cursor.execute("ALTER TABLE produtividade ADD COLUMN auditoria INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE produtividade ADD COLUMN observacao TEXT")
     except sqlite3.OperationalError:
         pass
 
@@ -138,6 +144,11 @@ def buscar_produtividade():
             df["auditoria"] = 0
         else:
             df["auditoria"] = pd.to_numeric(df["auditoria"], errors="coerce").fillna(0).astype(int)
+
+        if "observacao" not in df.columns:
+            df["observacao"] = ""
+        else:
+            df["observacao"] = df["observacao"].fillna("")
 
         df["total_sysvet"] = df["sysvet_erro"] + df["sysvet_exito"]
         df["produtividade_total"] = df["sysvet_erro"] + df["sysvet_exito"] + df["faturado"] + df["auditoria"]
@@ -478,6 +489,8 @@ elif pagina == "📝 Lançar Produtividade":
             with col4:
                 auditoria = st.number_input("🔍 Auditoria", min_value=0, value=0, step=1)
 
+            observacao = st.text_area("💬 Observações / Detalhes da Produtividade (Opcional)", placeholder="Descreva algo sobre a produtividade, ocorrências ou detalhes relevantes...")
+
             total = erro + exito + faturado + auditoria
             st.markdown(f"### 📊 Total computado do lançamento: `{total}`")
 
@@ -487,10 +500,10 @@ elif pagina == "📝 Lançar Produtividade":
                 conn = conectar()
                 conn.execute(
                     """
-                    INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria, observacao)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (str(data_lancamento), colaborador, int(erro), int(exito), int(faturado), int(auditoria))
+                    (str(data_lancamento), colaborador, int(erro), int(exito), int(faturado), int(auditoria), observacao.strip())
                 )
                 conn.commit()
                 conn.close()
@@ -530,7 +543,7 @@ elif pagina == "👥 Gerenciar Colaboradores" and st.session_state.perfil == "ad
 
 
 # =========================================================
-# EXCLUIR COLABORADOR (NOVO)
+# EXCLUIR COLABORADOR
 # =========================================================
 
 elif pagina == "🗑️ Excluir Colaborador" and st.session_state.perfil == "admin":
@@ -557,9 +570,7 @@ elif pagina == "🗑️ Excluir Colaborador" and st.session_state.perfil == "adm
                     conn = conectar()
                     cursor = conn.cursor()
                     
-                    # Remove da tabela de colaboradores
                     cursor.execute("DELETE FROM colaboradores WHERE nome = ?", (colab_para_excluir,))
-                    # Remove também os acessos associados, caso existam
                     cursor.execute("DELETE FROM acessos_colaboradores WHERE nome = ?", (colab_para_excluir,))
                     
                     conn.commit()
@@ -700,14 +711,15 @@ elif pagina == "📥 Importar Dados" and st.session_state.perfil == "admin":
                         exito_val = int(linha.get("sysvet_exito", linha.get("Exito", 0)) or 0)
                         faturado_val = int(linha.get("faturado", linha.get("Faturado", 0)) or 0)
                         auditoria_val = int(linha.get("auditoria", linha.get("Auditoria", 0)) or 0)
+                        obs_val = str(linha.get("observacao", linha.get("Observacao", "")) or "")
 
                         cursor.execute("""
-                            INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        """, (data_val, colab_val, erro_val, exito_val, faturado_val, auditoria_val))
+                            INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria, observacao)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (data_val, colab_val, erro_val, exito_val, faturado_val, auditoria_val, obs_val))
                         sucessos += 1
                     except Exception:
-                        erros_linha += 1
+                        erros_lines += 1 # type: ignore
 
                 conn.commit()
                 conn.close()
