@@ -1,5 +1,5 @@
 import streamlit as st
-import sqlite3
+import psycopg2
 import pandas as pd
 import plotly.express as px
 from datetime import date
@@ -17,15 +17,19 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-DB = "produtividade.db"
+# Recupera a string de conexão do Supabase com tratamento de segurança
+try:
+    DATABASE_URL = st.secrets["DATABASE_URL"]
+except Exception:
+    DATABASE_URL = ""
 
 
 # =========================================================
-# BANCO DE DADOS (CRIAÇÃO DO ZERO / MIGRAÇÃO AUTOMÁTICA)
+# BANCO DE DADOS (POSTGRESQL / SUPABASE)
 # =========================================================
 
 def conectar():
-    return sqlite3.connect(DB)
+    return psycopg2.connect(DATABASE_URL)
 
 
 def criar_banco():
@@ -34,14 +38,14 @@ def criar_banco():
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS colaboradores (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             nome TEXT NOT NULL UNIQUE
         )
     """)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS produtividade (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             data TEXT NOT NULL,
             colaborador TEXT NOT NULL,
             sysvet_erro INTEGER DEFAULT 0,
@@ -60,31 +64,38 @@ def criar_banco():
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS acessos_colaboradores (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             nome TEXT NOT NULL UNIQUE,
             senha TEXT NOT NULL
         )
     """)
 
     try:
-        cursor.execute("ALTER TABLE produtividade ADD COLUMN auditoria INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
+        cursor.execute("ALTER TABLE produtividade ADD COLUMN IF NOT EXISTS auditoria INTEGER DEFAULT 0")
+        conn.commit()
+    except Exception:
+        conn.rollback()
 
     cursor.execute("SELECT COUNT(*) FROM configuracoes")
     quantidade = cursor.fetchone()[0]
 
     if quantidade == 0:
         cursor.execute(
-            "INSERT INTO configuracoes (id, senha) VALUES (1, ?)",
+            "INSERT INTO configuracoes (id, senha) VALUES (1, %s) ON CONFLICT (id) DO NOTHING",
             ("2010",)
         )
 
     conn.commit()
+    cursor.close()
     conn.close()
 
 
-criar_banco()
+# Executa a criação das tabelas ao iniciar (se a URL estiver configurada)
+if DATABASE_URL:
+    try:
+        criar_banco()
+    except Exception as e:
+        st.error(f"❌ Erro ao inicializar o banco de dados: {repr(e)}")
 
 
 # =========================================================
@@ -96,6 +107,7 @@ def buscar_senha():
     cursor = conn.cursor()
     cursor.execute("SELECT senha FROM configuracoes WHERE id = 1")
     resultado = cursor.fetchone()
+    cursor.close()
     conn.close()
     if resultado:
         return resultado[0]
@@ -104,8 +116,10 @@ def buscar_senha():
 
 def alterar_senha(nova_senha):
     conn = conectar()
-    conn.execute("UPDATE configuracoes SET senha = ? WHERE id = 1", (nova_senha,))
+    cursor = conn.cursor()
+    cursor.execute("UPDATE configuracoes SET senha = %s WHERE id = 1", (nova_senha,))
     conn.commit()
+    cursor.close()
     conn.close()
 
 
@@ -165,6 +179,7 @@ def gerar_backup_json():
     cols = [desc[0] for desc in cursor.description]
     acessos = [dict(zip(cols, row)) for row in cursor.fetchall()]
 
+    cursor.close()
     conn.close()
 
     dados_backup = {
@@ -173,6 +188,16 @@ def gerar_backup_json():
         "acessos_colaboradores": acessos
     }
     return json.dumps(dados_backup, ensure_ascii=False, indent=4)
+
+
+# =========================================================
+# VERIFICAÇÃO DA CONFIGURAÇÃO DO BANCO
+# =========================================================
+
+if not DATABASE_URL:
+    st.error("🚨 **Erro de Configuração:** A chave `DATABASE_URL` não foi configurada nos Segredos do Streamlit.")
+    st.info("Vá em **Settings > Secrets** no painel do Streamlit Cloud e adicione a string de conexão do Supabase.")
+    st.stop()
 
 
 # =========================================================
@@ -290,7 +315,7 @@ if st.session_state.perfil == "admin":
         "🗑️ Excluir Colaborador",
         "🔑 Configurar Acessos",
         "📋 Histórico Geral",
-        "🗑️ Excluir Histórico",
+        "🗑 Excluir Histórico",
         "📥 Importar Dados",
         "📥 Backup & Exportação",
         "🔐 Segurança / Senha"
@@ -459,43 +484,48 @@ elif pagina == "📝 Lançar Produtividade":
     if colaboradores.empty:
         st.warning("⚠️ Cadastre colaboradores antes de realizar lançamentos.")
     else:
-        with st.form("form_produtividade"):
-            data_lancamento = st.date_input("📅 Data de Referência", value=date.today())
+        data_lancamento = st.date_input("📅 Data de Referência", value=date.today())
 
-            if st.session_state.perfil == "admin":
-                colaborador = st.selectbox("👤 Colaborador Responsável", colaboradores["nome"].tolist())
-            else:
-                colaborador = st.session_state.usuario_logado
-                st.info(f"👤 Registrando atividade em nome de: **{colaborador}**")
+        if st.session_state.perfil == "admin":
+            colaborador = st.selectbox("👤 Colaborador Responsável", colaboradores["nome"].tolist())
+        else:
+            colaborador = st.session_state.usuario_logado
+            st.info(f"👤 Registrando atividade em nome de: **{colaborador}**")
 
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                erro = st.number_input("❌ SYSVET Erro", min_value=0, value=0, step=1)
-            with col2:
-                exito = st.number_input("✅ SYSVET Êxito", min_value=0, value=0, step=1)
-            with col3:
-                faturado = st.number_input("📁 Faturado", min_value=0, value=0, step=1)
-            with col4:
-                auditoria = st.number_input("🔍 Auditoria", min_value=0, value=0, step=1)
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            erro = st.number_input("❌ SYSVET Erro", min_value=0, value=0, step=1)
+        with col2:
+            exito = st.number_input("✅ SYSVET Êxito", min_value=0, value=0, step=1)
+        with col3:
+            faturado = st.number_input("📁 Faturado", min_value=0, value=0, step=1)
+        with col4:
+            auditoria = st.number_input("🔍 Auditoria", min_value=0, value=0, step=1)
 
-            total = erro + exito + faturado + auditoria
-            st.markdown(f"### 📊 Total computado do lançamento: `{total}`")
+        total = erro + exito + faturado + auditoria
+        st.markdown(f"### 📊 Total computado do lançamento: `{total}`")
 
-            salvar = st.form_submit_button("💾 SALVAR REGISTRO OFICIAL", use_container_width=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+        salvar = st.button("💾 SALVAR REGISTRO OFICIAL", use_container_width=True)
 
-            if salvar:
+        if salvar:
+            try:
                 conn = conectar()
-                conn.execute(
+                cursor = conn.cursor()
+                cursor.execute(
                     """
                     INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     """,
                     (str(data_lancamento), colaborador, int(erro), int(exito), int(faturado), int(auditoria))
                 )
                 conn.commit()
+                cursor.close()
                 conn.close()
-                st.success("✅ Atividade registrada e salva no banco de dados com sucesso!")
-                st.rerun()
+                st.success("✅ Atividade registrada e salva no banco de dados na nuvem com sucesso!")
+                st.balloons()
+            except Exception as e:
+                st.error(f"❌ FALHA CRÍTICA AO SALVAR NO SUPABASE: {repr(e)}")
 
 
 # =========================================================
@@ -516,21 +546,19 @@ elif pagina == "👥 Gerenciar Colaboradores" and st.session_state.perfil == "ad
             else:
                 try:
                     conn = conectar()
-                    conn.execute("INSERT INTO colaboradores (nome) VALUES (?)", (nome.strip(),))
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO colaboradores (nome) VALUES (%s)", (nome.strip(),))
                     conn.commit()
+                    cursor.close()
                     conn.close()
                     st.success(f"✅ {nome} cadastrado com sucesso!")
                     st.rerun()
-                except sqlite3.IntegrityError:
-                    st.error("⚠️ Este colaborador já se encontra cadastrado no sistema.")
-
-    colaboradores = buscar_colaboradores()
-    if not colaboradores.empty:
-        st.dataframe(colaboradores[["id", "nome"]], use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"⚠️ Erro ao cadastrar colaborador: {repr(e)}")
 
 
 # =========================================================
-# EXCLUIR COLABORADOR (NOVO)
+# EXCLUIR COLABORADOR
 # =========================================================
 
 elif pagina == "🗑️ Excluir Colaborador" and st.session_state.perfil == "admin":
@@ -554,19 +582,21 @@ elif pagina == "🗑️ Excluir Colaborador" and st.session_state.perfil == "adm
 
             if deletar_colab:
                 if confirmar_exclusao:
-                    conn = conectar()
-                    cursor = conn.cursor()
-                    
-                    # Remove da tabela de colaboradores
-                    cursor.execute("DELETE FROM colaboradores WHERE nome = ?", (colab_para_excluir,))
-                    # Remove também os acessos associados, caso existam
-                    cursor.execute("DELETE FROM acessos_colaboradores WHERE nome = ?", (colab_para_excluir,))
-                    
-                    conn.commit()
-                    conn.close()
-                    
-                    st.success(f"✅ O colaborador '{colab_para_excluir}' foi removido com sucesso!")
-                    st.rerun()
+                    try:
+                        conn = conectar()
+                        cursor = conn.cursor()
+                        
+                        cursor.execute("DELETE FROM colaboradores WHERE nome = %s", (colab_para_excluir,))
+                        cursor.execute("DELETE FROM acessos_colaboradores WHERE nome = %s", (colab_para_excluir,))
+                        
+                        conn.commit()
+                        cursor.close()
+                        conn.close()
+                        
+                        st.success(f"✅ O colaborador '{colab_para_excluir}' foi removido com sucesso!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Erro ao excluir colaborador: {repr(e)}")
                 else:
                     st.error("❌ Marque a caixa de confirmação acima para autorizar a exclusão.")
 
@@ -586,27 +616,31 @@ elif pagina == "🔑 Configurar Acessos" and st.session_state.perfil == "admin":
             salvar_acesso = st.form_submit_button("💾 SALVAR CREDENCIAIS", use_container_width=True)
 
             if salvar_acesso and senha_colab.strip():
-                conn = conectar()
-                cursor = conn.cursor()
-                cursor.execute("SELECT id FROM acessos_colaboradores WHERE nome = ?", (colab_nome,))
-                existe = cursor.fetchone()
+                try:
+                    conn = conectar()
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT id FROM acessos_colaboradores WHERE nome = %s", (colab_nome,))
+                    existe = cursor.fetchone()
 
-                if existe:
-                    cursor.execute("UPDATE acessos_colaboradores SET senha = ? WHERE nome = ?", (senha_colab.strip(), colab_nome))
-                else:
-                    cursor.execute("INSERT INTO acessos_colaboradores (nome, senha) VALUES (?, ?)", (colab_nome, senha_colab.strip()))
+                    if existe:
+                        cursor.execute("UPDATE acessos_colaboradores SET senha = %s WHERE nome = %s", (senha_colab.strip(), colab_nome))
+                    else:
+                        cursor.execute("INSERT INTO acessos_colaboradores (nome, senha) VALUES (%s, %s)", (colab_nome, senha_colab.strip()))
 
-                conn.commit()
-                conn.close()
-                st.success(f"✅ Credenciais salvas para {colab_nome}!")
-                st.rerun()
+                    conn.commit()
+                    cursor.close()
+                    conn.close()
+                    st.success(f"✅ Credenciais salvas para {colab_nome}!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erro ao salvar credenciais: {repr(e)}")
 
 
 # =========================================================
 # EXCLUIR HISTÓRICO
 # =========================================================
 
-elif pagina == "🗑️ Excluir Histórico" and st.session_state.perfil == "admin":
+elif pagina == "🗑 Excluir Histórico" and st.session_state.perfil == "admin":
     st.title("🗑️ Gerenciamento e Exclusão de Registros")
     st.caption("Consulte a coluna 'id' dos lançamentos abaixo para realizar exclusões pontuais ou limpezas completas.")
 
@@ -626,18 +660,22 @@ elif pagina == "🗑️ Excluir Histórico" and st.session_state.perfil == "admi
             id_para_excluir = st.number_input("Informe o ID do registro que deseja apagar", min_value=1, step=1)
             
             if st.button("❌ APAGAR ESTE REGISTRO", use_container_width=True):
-                conn = conectar()
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM produtividade WHERE id = ?", (int(id_para_excluir),))
-                linhas_afetadas = cursor.rowcount
-                conn.commit()
-                conn.close()
+                try:
+                    conn = conectar()
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM produtividade WHERE id = %s", (int(id_para_excluir),))
+                    linhas_afetadas = cursor.rowcount
+                    conn.commit()
+                    cursor.close()
+                    conn.close()
 
-                if linhas_afetadas > 0:
-                    st.success(f"✅ Registro com ID {id_para_excluir} excluído com sucesso!")
-                    st.rerun()
-                else:
-                    st.warning(f"⚠️ Nenhum registro encontrado com o ID {id_para_excluir}.")
+                    if linhas_afetadas > 0:
+                        st.success(f"✅ Registro com ID {id_para_excluir} excluído com sucesso!")
+                        st.rerun()
+                    else:
+                        st.warning(f"⚠️ Nenhum registro encontrado com o ID {id_para_excluir}.")
+                except Exception as e:
+                    st.error(f"❌ Erro ao excluir registro: {repr(e)}")
 
         with col_del2:
             st.subheader("⚠️ Zona de Perigo (Limpeza Total)")
@@ -647,12 +685,17 @@ elif pagina == "🗑️ Excluir Histórico" and st.session_state.perfil == "admi
             
             if st.button("🚨 EXCLUIR TODO O HISTÓRICO", use_container_width=True):
                 if confirmar_limpeza:
-                    conn = conectar()
-                    conn.execute("DELETE FROM produtividade")
-                    conn.commit()
-                    conn.close()
-                    st.success("✅ Todo o histórico de produtividade foi apagado com sucesso!")
-                    st.rerun()
+                    try:
+                        conn = conectar()
+                        cursor = conn.cursor()
+                        cursor.execute("DELETE FROM produtividade")
+                        conn.commit()
+                        cursor.close()
+                        conn.close()
+                        st.success("✅ Todo o histórico de produtividade foi apagado com sucesso!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Erro ao limpar histórico: {repr(e)}")
                 else:
                     st.error("❌ Marque a caixa de confirmação acima para autorizar a limpeza total.")
 
@@ -703,18 +746,19 @@ elif pagina == "📥 Importar Dados" and st.session_state.perfil == "admin":
 
                         cursor.execute("""
                             INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria)
-                            VALUES (?, ?, ?, ?, ?, ?)
+                            VALUES (%s, %s, %s, %s, %s, %s)
                         """, (data_val, colab_val, erro_val, exito_val, faturado_val, auditoria_val))
                         sucessos += 1
                     except Exception:
                         erros_linha += 1
 
                 conn.commit()
+                cursor.close()
                 conn.close()
                 st.success(f"✅ Importação concluída! {sucessos} registros inseridos com sucesso." + (f" ({erros_linha} linhas ignoradas por erro nos dados)" if erros_linha > 0 else ""))
 
         except Exception as e:
-            st.error(f"❌ Erro ao processar o arquivo. Verifique se instalou as dependências (comando no terminal: pip install openpyxl xlrd). Detalhe técnico: {repr(e)}")
+            st.error(f"❌ Erro ao processar o arquivo. Detalhe técnico: {repr(e)}")
 
 
 # =========================================================
@@ -762,5 +806,8 @@ elif pagina == "🔐 Segurança / Senha" and st.session_state.perfil == "admin":
 
         if salvar_senha:
             if nova_senha.strip():
-                alterar_senha(nova_senha.strip())
-                st.success("✅ Senha alterada com sucesso!")
+                try:
+                    alterar_senha(nova_senha.strip())
+                    st.success("✅ Senha alterada com sucesso!")
+                except Exception as e:
+                    st.error(f"❌ Erro ao alterar senha: {repr(e)}")
