@@ -5,6 +5,7 @@ import plotly.express as px
 from datetime import date
 from io import BytesIO
 import json
+import requests  # Necessário para enviar/puxar dados de outros sites/APIs
 
 # =========================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -94,7 +95,7 @@ criar_banco()
 
 
 # =========================================================
-# FUNÇÕES DE APOIO E DADOS
+# FUNÇÕES DE APOIO E DADOS (E INTEGRAÇÃO EXTERNA)
 # =========================================================
 
 def buscar_senha():
@@ -186,6 +187,29 @@ def gerar_backup_json():
     return json.dumps(dados_backup, ensure_ascii=False, indent=4)
 
 
+# EXEMPLO DE FUNÇÃO PARA PUXAR DADOS DE UM SITE/API EXTERNA (CASO NECESSÁRIO)
+def puxar_dados_site_externo():
+    try:
+        # Substitua pela URL da API do site externo que deseja puxar informações
+        resposta = requests.get("https://api.exemplo.com/dados", timeout=5)
+        if resposta.status_code == 200:
+            return resposta.json()
+    except Exception:
+        return None
+    return None
+
+
+# EXEMPLO DE FUNÇÃO PARA ENVIAR DADOS PARA UM SITE/API EXTERNA
+def enviar_dados_para_externo(dados_payload):
+    try:
+        # Substitua pela URL do Webhook ou Endpoint do outro site
+        url_destino = "https://seu-sistema-externo.com/api/receber"
+        resposta = requests.post(url_destino, json=dados_payload, timeout=5)
+        return resposta.status_code == 200
+    except Exception:
+        return False
+
+
 # =========================================================
 # DESIGN SYSTEM EXCLUSIVO (UI / UX)
 # =========================================================
@@ -250,7 +274,7 @@ if not st.session_state.autenticado:
         else:
             df_acessos = buscar_acessos()
             if df_acessos.empty:
-                st.warning("⚠️ Nenhum acesso de colaborador configurado pelo Administrador.")
+                st.warning("⚠️️ Nenhum acesso de colaborador configurado pelo Administrador.")
             else:
                 colab_escolhido = st.selectbox("Selecione seu perfil", df_acessos["nome"].tolist())
                 senha_colab = st.text_input("Senha de acesso pessoal", type="password", key="senha_colab_input")
@@ -281,6 +305,12 @@ st.sidebar.markdown(f"""
     <p style="margin:4px 0 0 0; font-weight: 700; font-size: 0.95rem;">👤 {st.session_state.usuario_logado}</p>
 </div>
 """, unsafe_allow_html=True)
+
+# Atalho de link externo integrado no menu lateral
+st.sidebar.markdown("### 🌐 Integração Externa")
+st.sidebar.link_button("🔗 Acessar Site / Sistema Externo", "https://seu-outro-site.com", use_container_width=True)
+
+st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
 if st.session_state.modo_noturno:
     texto_modo = "☀️ Alternar Modo Claro"
@@ -458,7 +488,7 @@ if pagina == "📊 Dashboard Executivo" and st.session_state.perfil == "admin":
 
 
 # =========================================================
-# LANÇAR PRODUTIVIDADE
+# LANÇAR PRODUTIVIDADE (COM INTEGRAÇÃO DE ENVIO EXTERNO)
 # =========================================================
 
 elif pagina == "📝 Lançar Produtividade":
@@ -497,6 +527,7 @@ elif pagina == "📝 Lançar Produtividade":
             salvar = st.form_submit_button("💾 SALVAR REGISTRO OFICIAL", use_container_width=True)
 
             if salvar:
+                # 1. Salva no banco de dados local SQLite
                 conn = conectar()
                 conn.execute(
                     """
@@ -507,6 +538,22 @@ elif pagina == "📝 Lançar Produtividade":
                 )
                 conn.commit()
                 conn.close()
+
+                # 2. Envia os dados simultaneamente para o site/sistema externo (API/Webhook)
+                payload_externo = {
+                    "data": str(data_lancamento),
+                    "colaborador": colaborador,
+                    "sysvet_erro": int(erro),
+                    "sysvet_exito": int(exito),
+                    "faturado": int(faturado),
+                    "auditoria": int(auditoria),
+                    "total": total,
+                    "observacao": observacao.strip()
+                }
+                
+                # Executa o disparo (comentado se não houver endpoint ativo configurado)
+                # enviado_externamente = enviar_dados_para_externo(payload_externo)
+
                 st.success("✅ Atividade registrada e salva no banco de dados com sucesso!")
                 st.rerun()
 
@@ -651,7 +698,7 @@ elif pagina == "🗑️ Excluir Histórico" and st.session_state.perfil == "admi
                     st.warning(f"⚠️ Nenhum registro encontrado com o ID {id_para_excluir}.")
 
         with col_del2:
-            st.subheader("⚠️ Zona de Perigo (Limpeza Total)")
+            st.subheader("⚠️️ Zona de Perigo (Limpeza Total)")
             st.write("Atenção: Esta ação removerá **todos** os lançamentos salvos no banco de dados permanentemente.")
             
             confirmar_limpeza = st.checkbox("Estou ciente e quero limpar todo o histórico")
@@ -719,7 +766,7 @@ elif pagina == "📥 Importar Dados" and st.session_state.perfil == "admin":
                         """, (data_val, colab_val, erro_val, exito_val, faturado_val, auditoria_val, obs_val))
                         sucessos += 1
                     except Exception:
-                        erros_lines += 1 # type: ignore
+                        erros_linha += 1
 
                 conn.commit()
                 conn.close()
