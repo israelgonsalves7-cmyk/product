@@ -5,8 +5,8 @@ import plotly.express as px
 from datetime import date
 from io import BytesIO
 import json
-import requests  # Necessário para enviar/puxar dados de outros sites/APIs
-import urllib.parse  # Para tratar URLs com parâmetros de busca
+import os
+import glob
 
 # =========================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -96,7 +96,7 @@ criar_banco()
 
 
 # =========================================================
-# FUNÇÕES DE APOIO E DADOS (E INTEGRAÇÃO EXTERNA INTELIGENTE)
+# FUNÇÕES DE APOIO E LEITURA AUTOMÁTICA DE EXCEL
 # =========================================================
 
 def buscar_senha():
@@ -188,18 +188,39 @@ def gerar_backup_json():
     return json.dumps(dados_backup, ensure_ascii=False, indent=4)
 
 
-# INTEGRAÇÃO EXTERNA: Puxa dados do colaborador e mês específico antes de redirecionar
-def puxar_dados_colaborador_externo(nome_colaborador, mes, ano):
+# FUNÇÃO AUTOMÁTICA: Pega o último arquivo Excel na pasta atual e conta os atendimentos/pacientes
+def buscar_ultimo_arquivo_excel_e_contar_atendimentos():
     try:
-        nome_tratado = urllib.parse.quote(nome_colaborador)
-        url_api = f"https://api.exemplo.com/dados?colaborador={nome_tratado}&mes={mes}&ano={ano}"
+        # Procura arquivos .xlsx e .xls no diretório atual de execução do script
+        arquivos_xlsx = glob.glob("*.xlsx")
+        arquivos_xls = glob.glob("*.xls")
+        todos_arquivos = arquivos_xlsx + arquivos_xls
+
+        if not todos_arquivos:
+            return None, "Nenhum arquivo Excel (.xlsx ou .xls) foi encontrado na pasta do sistema."
+
+        # Identifica o arquivo mais recente com base na data/hora de modificação
+        ultimo_arquivo = max(todos_arquivos, key=os.path.getmtime)
+
+        # Lê a planilha
+        df_excel = pd.read_excel(ultimo_arquivo)
+
+        # Procura automaticamente pela coluna que identifica o colaborador/atendente
+        col_colab = next((c for c in df_excel.columns if 'colaborador' in c.lower() or 'usuario' in c.lower() or 'atendente' in c.lower()), None)
         
-        resposta = requests.get(url_api, timeout=5)
-        if resposta.status_code == 200:
-            return resposta.json()
-    except Exception:
-        return None
-    return None
+        if not col_colab:
+            return None, f"Coluna de colaborador não identificada no arquivo '{ultimo_arquivo}'. Colunas encontradas: {list(df_excel.columns)}"
+
+        # Agrupa e calcula a quantidade exata de atendimentos/cadastros realizados por cada colaborador
+        resumo_atendimentos = df_excel.groupby(col_colab).size().reset_index(name='quantidade_atendimentos')
+        
+        return {
+            "arquivo_lido": ultimo_arquivo,
+            "dados": resumo_atendimentos
+        }, None
+
+    except Exception as e:
+        return None, str(e)
 
 
 def enviar_dados_para_externo(dados_payload):
@@ -296,7 +317,7 @@ if not st.session_state.autenticado:
 
 
 # =========================================================
-# MENU LATERAL REFINADO (COM PESQUISA DE COLABORADOR E MÊS)
+# MENU LATERAL REFINADO (BOTÃO DIRETO DE BUSCA AUTOMÁTICA)
 # =========================================================
 
 st.sidebar.markdown("## ⚡ PRODUCT")
@@ -307,35 +328,23 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Seção de Pesquisa para Integração Externa por Colaborador e Mês
-st.sidebar.markdown("### 🌐 Integração Externa")
-df_cols_sidebar = buscar_colaboradores()
-lista_nomes_sidebar = df_cols_sidebar["nome"].tolist() if not df_cols_sidebar.empty else []
+st.sidebar.markdown("### 📊 Importação de Atendimentos")
 
-if lista_nomes_sidebar:
-    colab_consulta = st.sidebar.selectbox("🔍 Colaborador Alvo", lista_nomes_sidebar, key="colab_pesquisa_sidebar")
-    
-    # Dicionário de meses para facilitar a navegação
-    meses_dict = {
-        "Janeiro": "01", "Fevereiro": "02", "Março": "03", "Abril": "04",
-        "Maio": "05", "Junho": "06", "Julho": "07", "Agosto": "08",
-        "Setembro": "09", "Outubro": "10", "Novembro": "11", "Dezembro": "12"
-    }
-    
-    col_m1, col_m2 = st.sidebar.columns(2)
-    with col_m1:
-        mes_escolhido_nome = st.selectbox("📅 Mês", list(meses_dict.keys()), index=date.today().month - 1)
-        mes_num = meses_dict[mes_escolhido_nome]
-    with col_m2:
-        ano_escolhido = st.number_input("📅 Ano", min_value=2020, max_value=2035, value=date.today().year, step=1)
-    
-    # Monta a URL dinâmica injetando tanto o colaborador quanto o mês/ano selecionados
-    url_base_externa = "https://provet-korus.pixeonkorus.com/RotinaDiaria/Situacao.aspx?ad=provet"
-    url_dinamica = f"{url_base_externa}&colaborador={urllib.parse.quote(colab_consulta)}&mes={mes_num}&ano={ano_escolhido}"
-    
-    st.sidebar.link_button(f"🔗 Acessar Sistema ({mes_escolhido_nome}/{ano_escolhido})", url_dinamica, use_container_width=True)
-else:
-    st.sidebar.info("Cadastre colaboradores para habilitar a busca personalizada.")
+# Botão direto sem precisar informar caminho
+if st.sidebar.button("🔄 Puxar Cadastros do Último Excel", use_container_width=True):
+    with st.spinner("Analisando o arquivo Excel mais recente..."):
+        resultado_leitura, erro_msg = buscar_ultimo_arquivo_excel_e_contar_atendimentos()
+        
+        if erro_msg:
+            st.sidebar.error(f"⚠️ {erro_msg}")
+        else:
+            st.sidebar.success(f"✅ Arquivo '{resultado_leitura['arquivo_lido']}' lido com sucesso!")
+            st.session_state["dados_excel_recente"] = resultado_leitura["dados"]
+
+# Se houver dados processados na sessão, exibe a tabela de contagem na barra lateral
+if "dados_excel_recente" in st.session_state:
+    st.sidebar.markdown("#### 📋 Contagem por Colaborador")
+    st.sidebar.dataframe(st.session_state["dados_excel_recente"], hide_index=True, use_container_width=True)
 
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
@@ -576,7 +585,7 @@ elif pagina == "📝 Lançar Produtividade":
                     "observacao": observacao.strip()
                 }
                 
-                # enviado_externamente = enviar_dados_para_externo(payload_externo)
+                enviar_dados_para_externo(payload_externo)
 
                 st.success("✅ Atividade registrada e salva no banco de dados com sucesso!")
                 st.rerun()
@@ -606,7 +615,7 @@ elif pagina == "👥 Gerenciar Colaboradores" and st.session_state.perfil == "ad
                     st.success(f"✅ {nome} cadastrado com sucesso!")
                     st.rerun()
                 except sqlite3.IntegrityError:
-                    st.error("⚠️ Este colaborador já se encontra cadastrado no sistema.")
+                    st.error("⚠ Este colaborador já se encontra cadastrado no sistema.")
 
     colaboradores = buscar_colaboradores()
     if not colaboradores.empty:
@@ -682,6 +691,19 @@ elif pagina == "🔑 Configurar Acessos" and st.session_state.perfil == "admin":
                 conn.close()
                 st.success(f"✅ Credenciais salvas para {colab_nome}!")
                 st.rerun()
+
+
+# =========================================================
+# HISTÓRICO GERAL
+# =========================================================
+
+elif pagina == "📋 Histórico Geral":
+    st.title("📋 Histórico Geral de Produtividade")
+    df_hist = buscar_produtividade()
+    if df_hist.empty:
+        st.info("Nenhum registro encontrado.")
+    else:
+        st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
 
 # =========================================================
@@ -779,58 +801,3 @@ elif pagina == "📥 Importar Dados" and st.session_state.perfil == "admin":
                         colab_val = str(linha.get("colaborador", linha.get("Colaborador", "Desconhecido")))
                         
                         erro_val = int(linha.get("sysvet_erro", linha.get("Erro", 0)) or 0)
-                        exito_val = int(linha.get("sysvet_exito", linha.get("Exito", 0)) or 0)
-                        faturado_val = int(linha.get("faturado", linha.get("Faturado", 0)) or 0)
-                        auditoria_val = int(linha.get("auditoria", linha.get("Auditoria", 0)) or 0)
-                        obs_val = str(linha.get("observacao", linha.get("Observacao", "")) or "")
-
-                        cursor.execute("""
-                            INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria, observacao)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (data_val, colab_val, erro_val, exito_val, faturado_val, auditoria_val, obs_val))
-                        sucessos += 1
-                    except Exception:
-                        erros_linha += 1
-
-                conn.commit()
-                conn.close()
-                st.success(f"✅ Importação concluída! {sucessos} registros inseridos com sucesso." + (f" ({erros_linha} linhas ignoradas por erro nos dados)" if erros_linha > 0 else ""))
-
-        except Exception as e:
-            st.error(f"❌ Erro ao processar o arquivo. Verifique se instalou as dependências. Detalhe técnico: {repr(e)}")
-
-
-# =========================================================
-# HISTÓRICO GERAL
-# =========================================================
-
-elif pagina == "📋 Histórico Geral":
-    st.title("📋 Histórico Geral de Lançamentos")
-    df_hist = buscar_produtividade()
-
-    if df_hist.empty:
-        st.info("Nenhum registro encontrado.")
-    else:
-        if st.session_state.perfil != "admin":
-            df_hist = df_hist[df_hist["colaborador"] == st.session_state.usuario_logado]
-
-        st.dataframe(df_hist, use_container_width=True, hide_index=True)
-
-
-# =========================================================
-# BACKUP & EXPORTAÇÃO
-# =========================================================
-
-elif pagina == "📥 Backup & Exportação" and st.session_state.perfil == "admin":
-    st.title("📥 Backup & Exportação")
-    st.caption("Faça o download de todos os dados do sistema em formato JSON para fins de segurança.")
-    
-    dados_json = gerar_backup_json()
-    
-    st.download_button(
-        label="📥 Baixar Backup Completo (JSON)",
-        data=dados_json,
-        file_name=f"backup_produtividade_{date.today()}.json",
-        mime="application/json",
-        use_container_width=True
-    )
