@@ -5,8 +5,8 @@ import plotly.express as px
 from datetime import date
 from io import BytesIO
 import json
-import requests  # Necessário para enviar/puxar dados de outros sites/APIs
-import urllib.parse  # Para tratar URLs com parâmetros de busca
+import requests
+import urllib.parse
 
 # =========================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -96,7 +96,7 @@ criar_banco()
 
 
 # =========================================================
-# FUNÇÕES DE APOIO E DADOS (E INTEGRAÇÃO EXTERNA INTELIGENTE)
+# FUNÇÕES DE APOIO E INTEGRAÇÃO EXTERNA DE PRODUTIVIDADE
 # =========================================================
 
 def buscar_senha():
@@ -188,15 +188,15 @@ def gerar_backup_json():
     return json.dumps(dados_backup, ensure_ascii=False, indent=4)
 
 
-# INTEGRAÇÃO EXTERNA: Puxa dados considerando a Unidade PROVET-APOIO, o usuário e o paciente
-def puxar_dados_paciente_externo(unidade, usuario_atendimento, paciente_busca, mes, ano):
+# INTEGRAÇÃO EXTERNA: Puxa especificamente a PRODUTIVIDADE do paciente na unidade e usuário informados
+def puxar_produtividade_paciente_externo(unidade, usuario_atendimento, paciente_busca, mes, ano):
     try:
         uni_tratada = urllib.parse.quote(unidade)
         usu_tratado = urllib.parse.quote(usuario_atendimento)
         pac_tratado = urllib.parse.quote(paciente_busca)
         
-        # Endpoint integrando os novos parâmetros de Unidade, Usuário e Paciente
-        url_api = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/api/paciente?unidade={uni_tratada}&usuario={usu_tratado}&paciente={pac_tratado}&mes={mes}&ano={ano}"
+        # Endpoint focado em retornar os dados de produtividade mapeados
+        url_api = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/api/produtividade_paciente?unidade={uni_tratada}&usuario={usu_tratado}&paciente={pac_tratado}&mes={mes}&ano={ano}"
         
         resposta = requests.get(url_api, timeout=5)
         if resposta.status_code == 200:
@@ -311,14 +311,12 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Seção de Pesquisa Avançada com Unidade PROVET-APOIO, Usuário e Paciente
-st.sidebar.markdown("### 🌐 Consulta Externa / Pacientes")
+# Seção de Pesquisa e Puxada de Produtividade com PROVET-APOIO como padrão/opção principal
+st.sidebar.markdown("### 🌐 Puxar Produtividade")
 
-# Filtro de Unidade fixando/destacando a PROVET-APOIO
 lista_unidades = ["PROVET-APOIO", "PROVET-MATRIZ", "PROVET-FILIAL"]
-unidade_selecionada = st.sidebar.selectbox("🏥 Unidade", lista_unidades)
+unidade_selecionada = st.sidebar.selectbox("🏥 Unidade", lista_unidades, index=0)
 
-# Filtro de Usuário de Atendimento
 df_cols_sidebar = buscar_colaboradores()
 lista_nomes_sidebar = df_cols_sidebar["nome"].tolist() if not df_cols_sidebar.empty else []
 
@@ -327,8 +325,7 @@ if lista_nomes_sidebar:
 else:
     usuario_atendimento = st.sidebar.text_input("👨‍⚕️ Usuário de Atendimento", value="Atendente Padrão")
 
-# Campo para pesquisar o nome do paciente
-paciente_pesquisa = st.sidebar.text_input("🐾 Pesquisar Nome do Paciente", placeholder="Ex: Mel, Thor...")
+paciente_pesquisa = st.sidebar.text_input("🐾 Nome do Paciente", placeholder="Digite o nome do paciente...")
 
 meses_dict = {
     "Janeiro": "01", "Fevereiro": "02", "Março": "03", "Abril": "04",
@@ -351,17 +348,17 @@ if paciente_pesquisa:
 
 st.sidebar.link_button(f"🔗 Abrir Sistema ({unidade_selecionada})", url_base_externa, use_container_width=True)
 
-# Botão para puxar as informações do paciente diretamente da API usando os filtros definidos
-if st.sidebar.button("📥 Puxar Dados do Paciente", use_container_width=True):
+# Botão principal para puxar a produtividade do paciente com os filtros informados
+if st.sidebar.button("📥 Puxar Produtividade do Paciente", use_container_width=True):
     if not paciente_pesquisa.strip():
-        st.sidebar.warning("⚠️ Informe o nome do paciente para realizar a busca.")
+        st.sidebar.warning("⚠️ Informe o nome do paciente para puxar a produtividade.")
     else:
-        with st.spinner(f"Buscando informações para '{paciente_pesquisa}' em {unidade_selecionada}..."):
-            dados_paciente = puxar_dados_paciente_externo(unidade_selecionada, usuario_atendimento, paciente_pesquisa, mes_num, ano_escolhido)
-            if dados_paciente:
-                st.sidebar.success(f"✅ Dados do paciente '{paciente_pesquisa}' carregados com sucesso!")
+        with st.spinner(f"Buscando produtividade de '{paciente_pesquisa}' ({unidade_selecionada})..."):
+            dados_prod = puxar_produtividade_paciente_externo(unidade_selecionada, usuario_atendimento, paciente_pesquisa, mes_num, ano_escolhido)
+            if dados_prod:
+                st.sidebar.success(f"✅ Produtividade de '{paciente_pesquisa}' recuperada com sucesso!")
             else:
-                st.sidebar.warning("⚠️ Nenhum registro encontrado para este paciente na unidade selecionada.")
+                st.sidebar.warning("⚠️ Nenhum registro de produtividade encontrado para os parâmetros informados.")
 
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
@@ -632,7 +629,7 @@ elif pagina == "👥 Gerenciar Colaboradores" and st.session_state.perfil == "ad
                     st.success(f"✅ {nome} cadastrado com sucesso!")
                     st.rerun()
                 except sqlite3.IntegrityError:
-                    st.error("⚠️ Este colaborador já se encontra cadastrado no sistema.")
+                    st.error("⚠️️ Este colaborador já se encontra cadastrado no sistema.")
 
     colaboradores = buscar_colaboradores()
     if not colaboradores.empty:
@@ -660,7 +657,7 @@ elif pagina == "🗑️ Excluir Colaborador" and st.session_state.perfil == "adm
             colab_para_excluir = st.selectbox("Selecione o colaborador a ser excluído", colaboradores["nome"].tolist())
             
             confirmar_exclusao = st.checkbox("Estou ciente de que a remoção excluirá o cadastro do colaborador")
-            deletar_colab = st.form_submit_button("🗑️️ EXCLUIR COLABORADOR SELECIONADO", use_container_width=True)
+            deletar_colab = st.form_submit_button("🗑️ EXCLUIR COLABORADOR SELECIONADO", use_container_width=True)
 
             if deletar_colab:
                 if confirmar_exclusao:
