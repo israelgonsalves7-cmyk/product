@@ -188,12 +188,15 @@ def gerar_backup_json():
     return json.dumps(dados_backup, ensure_ascii=False, indent=4)
 
 
-# INTEGRAÇÃO EXTERNA: Puxa dados de produtividade do colaborador e mês específico direto da API/Extensão
-def puxar_dados_colaborador_externo(nome_colaborador, mes, ano):
+# INTEGRAÇÃO EXTERNA: Puxa dados considerando a Unidade PROVET-APOIO, o usuário e o paciente
+def puxar_dados_paciente_externo(unidade, usuario_atendimento, paciente_busca, mes, ano):
     try:
-        nome_tratado = urllib.parse.quote(nome_colaborador)
-        # Endpoint de exemplo que retorna os dados do colaborador mapeados na extensão/sistema
-        url_api = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/api/produtividade?colaborador={nome_tratado}&mes={mes}&ano={ano}"
+        uni_tratada = urllib.parse.quote(unidade)
+        usu_tratado = urllib.parse.quote(usuario_atendimento)
+        pac_tratado = urllib.parse.quote(paciente_busca)
+        
+        # Endpoint integrando os novos parâmetros de Unidade, Usuário e Paciente
+        url_api = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/api/paciente?unidade={uni_tratada}&usuario={usu_tratado}&paciente={pac_tratado}&mes={mes}&ano={ano}"
         
         resposta = requests.get(url_api, timeout=5)
         if resposta.status_code == 200:
@@ -297,7 +300,7 @@ if not st.session_state.autenticado:
 
 
 # =========================================================
-# MENU LATERAL REFINADO (COM PESQUISA E PUXADA DE DADOS DA EXTENSÃO)
+# MENU LATERAL REFINADO (COM FILTROS DE UNIDADE, USUÁRIO E PACIENTE)
 # =========================================================
 
 st.sidebar.markdown("## ⚡ PRODUCT")
@@ -308,43 +311,57 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Seção de Pesquisa e Importação Direta da Extensão/Sistema Externo
-st.sidebar.markdown("### 🌐 Integração / Extensão")
+# Seção de Pesquisa Avançada com Unidade PROVET-APOIO, Usuário e Paciente
+st.sidebar.markdown("### 🌐 Consulta Externa / Pacientes")
+
+# Filtro de Unidade fixando/destacando a PROVET-APOIO
+lista_unidades = ["PROVET-APOIO", "PROVET-MATRIZ", "PROVET-FILIAL"]
+unidade_selecionada = st.sidebar.selectbox("🏥 Unidade", lista_unidades)
+
+# Filtro de Usuário de Atendimento
 df_cols_sidebar = buscar_colaboradores()
 lista_nomes_sidebar = df_cols_sidebar["nome"].tolist() if not df_cols_sidebar.empty else []
 
 if lista_nomes_sidebar:
-    colab_consulta = st.sidebar.selectbox("🔍 Colaborador Alvo", lista_nomes_sidebar, key="colab_pesquisa_sidebar")
-    
-    meses_dict = {
-        "Janeiro": "01", "Fevereiro": "02", "Março": "03", "Abril": "04",
-        "Maio": "05", "Junho": "06", "Julho": "07", "Agosto": "08",
-        "Setembro": "09", "Outubro": "10", "Novembro": "11", "Dezembro": "12"
-    }
-    
-    col_m1, col_m2 = st.sidebar.columns(2)
-    with col_m1:
-        mes_escolhido_nome = st.selectbox("📅 Mês", list(meses_dict.keys()), index=date.today().month - 1)
-        mes_num = meses_dict[mes_escolhido_nome]
-    with col_m2:
-        ano_escolhido = st.number_input("📅 Ano", min_value=2020, max_value=2035, value=date.today().year, step=1)
-    
-    url_base_externa = "https://provet-korus.pixeonkorus.com/RotinaDiaria/Situacao.aspx?ad=provet"
-    url_dinamica = f"{url_base_externa}&colaborador={urllib.parse.quote(colab_consulta)}&mes={mes_num}&ano={ano_escolhido}"
-    
-    st.sidebar.link_button(f"🔗 Abrir Sistema ({mes_escolhido_nome}/{ano_escolhido})", url_dinamica, use_container_width=True)
-
-    # Botão para puxar a produtividade diretamente da extensão/API para dentro do aplicativo
-    if st.sidebar.button("📥 Puxar Dados da Extensão", use_container_width=True):
-        with st.spinner("Buscando dados na extensão/sistema..."):
-            dados_externos = puxar_dados_colaborador_externo(colab_consulta, mes_num, ano_escolhido)
-            if dados_externos:
-                st.sidebar.success(f"✅ Produtividade de {colab_consulta} puxada com sucesso!")
-                # Aqui você pode salvar automaticamente no banco ou injetar na sessão se desejar
-            else:
-                st.sidebar.warning("⚠️ Nenhum dado retornado ou endpoint indisponível no momento.")
+    usuario_atendimento = st.sidebar.selectbox("👨‍⚕️ Usuário de Atendimento", lista_nomes_sidebar)
 else:
-    st.sidebar.info("Cadastre colaboradores para habilitar a busca personalizada.")
+    usuario_atendimento = st.sidebar.text_input("👨‍⚕️ Usuário de Atendimento", value="Atendente Padrão")
+
+# Campo para pesquisar o nome do paciente
+paciente_pesquisa = st.sidebar.text_input("🐾 Pesquisar Nome do Paciente", placeholder="Ex: Mel, Thor...")
+
+meses_dict = {
+    "Janeiro": "01", "Fevereiro": "02", "Março": "03", "Abril": "04",
+    "Maio": "05", "Junho": "06", "Julho": "07", "Agosto": "08",
+    "Setembro": "09", "Outubro": "10", "Novembro": "11", "Dezembro": "12"
+}
+
+col_m1, col_m2 = st.sidebar.columns(2)
+with col_m1:
+    mes_escolhido_nome = st.selectbox("📅 Mês", list(meses_dict.keys()), index=date.today().month - 1)
+    mes_num = meses_dict[mes_escolhido_nome]
+with col_m2:
+    ano_escolhido = st.number_input("📅 Ano", min_value=2020, max_value=2035, value=date.today().year, step=1)
+
+url_base_externa = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/Situacao.aspx?ad=provet&unidade={urllib.parse.quote(unidade_selecionada)}"
+if usuario_atendimento:
+    url_base_externa += f"&usuario={urllib.parse.quote(usuario_atendimento)}"
+if paciente_pesquisa:
+    url_base_externa += f"&paciente={urllib.parse.quote(paciente_pesquisa)}"
+
+st.sidebar.link_button(f"🔗 Abrir Sistema ({unidade_selecionada})", url_base_externa, use_container_width=True)
+
+# Botão para puxar as informações do paciente diretamente da API usando os filtros definidos
+if st.sidebar.button("📥 Puxar Dados do Paciente", use_container_width=True):
+    if not paciente_pesquisa.strip():
+        st.sidebar.warning("⚠️ Informe o nome do paciente para realizar a busca.")
+    else:
+        with st.spinner(f"Buscando informações para '{paciente_pesquisa}' em {unidade_selecionada}..."):
+            dados_paciente = puxar_dados_paciente_externo(unidade_selecionada, usuario_atendimento, paciente_pesquisa, mes_num, ano_escolhido)
+            if dados_paciente:
+                st.sidebar.success(f"✅ Dados do paciente '{paciente_pesquisa}' carregados com sucesso!")
+            else:
+                st.sidebar.warning("⚠️ Nenhum registro encontrado para este paciente na unidade selecionada.")
 
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
@@ -643,7 +660,7 @@ elif pagina == "🗑️ Excluir Colaborador" and st.session_state.perfil == "adm
             colab_para_excluir = st.selectbox("Selecione o colaborador a ser excluído", colaboradores["nome"].tolist())
             
             confirmar_exclusao = st.checkbox("Estou ciente de que a remoção excluirá o cadastro do colaborador")
-            deletar_colab = st.form_submit_button("🗑️ EXCLUIR COLABORADOR SELECIONADO", use_container_width=True)
+            deletar_colab = st.form_submit_button("🗑️️ EXCLUIR COLABORADOR SELECIONADO", use_container_width=True)
 
             if deletar_colab:
                 if confirmar_exclusao:
