@@ -5,8 +5,8 @@ import plotly.express as px
 from datetime import date
 from io import BytesIO
 import json
-import os
-import glob
+import requests  # Necessário para enviar/puxar dados de outros sites/APIs
+import urllib.parse  # Para tratar URLs com parâmetros de busca
 
 # =========================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -96,7 +96,7 @@ criar_banco()
 
 
 # =========================================================
-# FUNÇÕES DE APOIO E LEITURA AUTOMÁTICA DE EXCEL
+# FUNÇÕES DE APOIO E DADOS (E INTEGRAÇÃO EXTERNA INTELIGENTE)
 # =========================================================
 
 def buscar_senha():
@@ -188,39 +188,22 @@ def gerar_backup_json():
     return json.dumps(dados_backup, ensure_ascii=False, indent=4)
 
 
-# FUNÇÃO AUTOMÁTICA: Pega o último arquivo Excel na pasta atual e conta os atendimentos/pacientes
-def buscar_ultimo_arquivo_excel_e_contar_atendimentos():
+# INTEGRAÇÃO EXTERNA: Puxa dados considerando a Unidade PROVET-APOIO, o usuário e o paciente
+def puxar_dados_paciente_externo(unidade, usuario_atendimento, paciente_busca, mes, ano):
     try:
-        # Procura arquivos .xlsx e .xls no diretório atual de execução do script
-        arquivos_xlsx = glob.glob("*.xlsx")
-        arquivos_xls = glob.glob("*.xls")
-        todos_arquivos = arquivos_xlsx + arquivos_xls
-
-        if not todos_arquivos:
-            return None, "Nenhum arquivo Excel (.xlsx ou .xls) foi encontrado na pasta do sistema."
-
-        # Identifica o arquivo mais recente com base na data/hora de modificação
-        ultimo_arquivo = max(todos_arquivos, key=os.path.getmtime)
-
-        # Lê a planilha
-        df_excel = pd.read_excel(ultimo_arquivo)
-
-        # Procura automaticamente pela coluna que identifica o colaborador/atendente
-        col_colab = next((c for c in df_excel.columns if 'colaborador' in c.lower() or 'usuario' in c.lower() or 'atendente' in c.lower()), None)
+        uni_tratada = urllib.parse.quote(unidade)
+        usu_tratado = urllib.parse.quote(usuario_atendimento)
+        pac_tratado = urllib.parse.quote(paciente_busca)
         
-        if not col_colab:
-            return None, f"Coluna de colaborador não identificada no arquivo '{ultimo_arquivo}'. Colunas encontradas: {list(df_excel.columns)}"
-
-        # Agrupa e calcula a quantidade exata de atendimentos/cadastros realizados por cada colaborador
-        resumo_atendimentos = df_excel.groupby(col_colab).size().reset_index(name='quantidade_atendimentos')
+        # Endpoint integrando os novos parâmetros de Unidade, Usuário e Paciente
+        url_api = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/api/paciente?unidade={uni_tratada}&usuario={usu_tratado}&paciente={pac_tratado}&mes={mes}&ano={ano}"
         
-        return {
-            "arquivo_lido": ultimo_arquivo,
-            "dados": resumo_atendimentos
-        }, None
-
-    except Exception as e:
-        return None, str(e)
+        resposta = requests.get(url_api, timeout=5)
+        if resposta.status_code == 200:
+            return resposta.json()
+    except Exception:
+        return None
+    return None
 
 
 def enviar_dados_para_externo(dados_payload):
@@ -317,7 +300,7 @@ if not st.session_state.autenticado:
 
 
 # =========================================================
-# MENU LATERAL REFINADO (BOTÃO DIRETO DE BUSCA AUTOMÁTICA)
+# MENU LATERAL REFINADO (COM FILTROS DE UNIDADE, USUÁRIO E PACIENTE)
 # =========================================================
 
 st.sidebar.markdown("## ⚡ PRODUCT")
@@ -328,23 +311,57 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.sidebar.markdown("### 📊 Importação de Atendimentos")
+# Seção de Pesquisa Avançada com Unidade PROVET-APOIO, Usuário e Paciente
+st.sidebar.markdown("### 🌐 Consulta Externa / Pacientes")
 
-# Botão direto sem precisar informar caminho
-if st.sidebar.button("🔄 Puxar Cadastros do Último Excel", use_container_width=True):
-    with st.spinner("Analisando o arquivo Excel mais recente..."):
-        resultado_leitura, erro_msg = buscar_ultimo_arquivo_excel_e_contar_atendimentos()
-        
-        if erro_msg:
-            st.sidebar.error(f"⚠️ {erro_msg}")
-        else:
-            st.sidebar.success(f"✅ Arquivo '{resultado_leitura['arquivo_lido']}' lido com sucesso!")
-            st.session_state["dados_excel_recente"] = resultado_leitura["dados"]
+# Filtro de Unidade fixando/destacando a PROVET-APOIO
+lista_unidades = ["PROVET-APOIO", "PROVET-MATRIZ", "PROVET-FILIAL"]
+unidade_selecionada = st.sidebar.selectbox("🏥 Unidade", lista_unidades)
 
-# Se houver dados processados na sessão, exibe a tabela de contagem na barra lateral
-if "dados_excel_recente" in st.session_state:
-    st.sidebar.markdown("#### 📋 Contagem por Colaborador")
-    st.sidebar.dataframe(st.session_state["dados_excel_recente"], hide_index=True, use_container_width=True)
+# Filtro de Usuário de Atendimento
+df_cols_sidebar = buscar_colaboradores()
+lista_nomes_sidebar = df_cols_sidebar["nome"].tolist() if not df_cols_sidebar.empty else []
+
+if lista_nomes_sidebar:
+    usuario_atendimento = st.sidebar.selectbox("👨‍⚕️ Usuário de Atendimento", lista_nomes_sidebar)
+else:
+    usuario_atendimento = st.sidebar.text_input("👨‍⚕️ Usuário de Atendimento", value="Atendente Padrão")
+
+# Campo para pesquisar o nome do paciente
+paciente_pesquisa = st.sidebar.text_input("🐾 Pesquisar Nome do Paciente", placeholder="Ex: Mel, Thor...")
+
+meses_dict = {
+    "Janeiro": "01", "Fevereiro": "02", "Março": "03", "Abril": "04",
+    "Maio": "05", "Junho": "06", "Julho": "07", "Agosto": "08",
+    "Setembro": "09", "Outubro": "10", "Novembro": "11", "Dezembro": "12"
+}
+
+col_m1, col_m2 = st.sidebar.columns(2)
+with col_m1:
+    mes_escolhido_nome = st.selectbox("📅 Mês", list(meses_dict.keys()), index=date.today().month - 1)
+    mes_num = meses_dict[mes_escolhido_nome]
+with col_m2:
+    ano_escolhido = st.number_input("📅 Ano", min_value=2020, max_value=2035, value=date.today().year, step=1)
+
+url_base_externa = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/Situacao.aspx?ad=provet&unidade={urllib.parse.quote(unidade_selecionada)}"
+if usuario_atendimento:
+    url_base_externa += f"&usuario={urllib.parse.quote(usuario_atendimento)}"
+if paciente_pesquisa:
+    url_base_externa += f"&paciente={urllib.parse.quote(paciente_pesquisa)}"
+
+st.sidebar.link_button(f"🔗 Abrir Sistema ({unidade_selecionada})", url_base_externa, use_container_width=True)
+
+# Botão para puxar as informações do paciente diretamente da API usando os filtros definidos
+if st.sidebar.button("📥 Puxar Dados do Paciente", use_container_width=True):
+    if not paciente_pesquisa.strip():
+        st.sidebar.warning("⚠️ Informe o nome do paciente para realizar a busca.")
+    else:
+        with st.spinner(f"Buscando informações para '{paciente_pesquisa}' em {unidade_selecionada}..."):
+            dados_paciente = puxar_dados_paciente_externo(unidade_selecionada, usuario_atendimento, paciente_pesquisa, mes_num, ano_escolhido)
+            if dados_paciente:
+                st.sidebar.success(f"✅ Dados do paciente '{paciente_pesquisa}' carregados com sucesso!")
+            else:
+                st.sidebar.warning("⚠️ Nenhum registro encontrado para este paciente na unidade selecionada.")
 
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
@@ -615,7 +632,7 @@ elif pagina == "👥 Gerenciar Colaboradores" and st.session_state.perfil == "ad
                     st.success(f"✅ {nome} cadastrado com sucesso!")
                     st.rerun()
                 except sqlite3.IntegrityError:
-                    st.error("⚠ Este colaborador já se encontra cadastrado no sistema.")
+                    st.error("⚠️ Este colaborador já se encontra cadastrado no sistema.")
 
     colaboradores = buscar_colaboradores()
     if not colaboradores.empty:
@@ -643,7 +660,7 @@ elif pagina == "🗑️ Excluir Colaborador" and st.session_state.perfil == "adm
             colab_para_excluir = st.selectbox("Selecione o colaborador a ser excluído", colaboradores["nome"].tolist())
             
             confirmar_exclusao = st.checkbox("Estou ciente de que a remoção excluirá o cadastro do colaborador")
-            deletar_colab = st.form_submit_button("🗑️ EXCLUIR COLABORADOR SELECIONADO", use_container_width=True)
+            deletar_colab = st.form_submit_button("🗑️️ EXCLUIR COLABORADOR SELECIONADO", use_container_width=True)
 
             if deletar_colab:
                 if confirmar_exclusao:
@@ -801,3 +818,81 @@ elif pagina == "📥 Importar Dados" and st.session_state.perfil == "admin":
                         colab_val = str(linha.get("colaborador", linha.get("Colaborador", "Desconhecido")))
                         
                         erro_val = int(linha.get("sysvet_erro", linha.get("Erro", 0)) or 0)
+                        exito_val = int(linha.get("sysvet_exito", linha.get("Exito", 0)) or 0)
+                        faturado_val = int(linha.get("faturado", linha.get("Faturado", 0)) or 0)
+                        auditoria_val = int(linha.get("auditoria", linha.get("Auditoria", 0)) or 0)
+                        obs_val = str(linha.get("observacao", linha.get("Observacao", "")) or "")
+
+                        cursor.execute("""
+                            INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria, observacao)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (data_val, colab_val, erro_val, exito_val, faturado_val, auditoria_val, obs_val))
+                        sucessos += 1
+                    except Exception:
+                        erros_linha += 1
+
+                conn.commit()
+                conn.close()
+                st.success(f"✅ Importação concluída! {sucessos} registros inseridos com sucesso.")
+        except Exception as e:
+            st.error(f"❌ Erro ao processar arquivo: {e}")
+
+
+# =========================================================
+# BACKUP & EXPORTAÇÃO
+# =========================================================
+
+elif pagina == "📥 Backup & Exportação" and st.session_state.perfil == "admin":
+    st.title("📥 Backup & Exportação de Dados")
+    st.caption("Faça o download do backup completo do sistema em formato JSON ou exporte relatórios consolidados em Excel.")
+
+    dados_json = gerar_backup_json()
+
+    st.download_button(
+        label="📥 Baixar Backup Completo (JSON)",
+        data=dados_json,
+        file_name=f"backup_produtividade_{date.today()}.json",
+        mime="application/json",
+        use_container_width=True
+    )
+
+    df_export = buscar_produtividade()
+    if not df_export.empty:
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            df_export.to_excel(writer, index=False, sheet_name="Produtividade")
+        
+        st.download_button(
+            label="📊 Baixar Relatório Completo em Excel (.xlsx)",
+            data=buffer.getvalue(),
+            file_name=f"relatorio_produtividade_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+
+# =========================================================
+# SEGURANÇA / SENHA
+# =========================================================
+
+elif pagina == "🔐 Segurança / Senha" and st.session_state.perfil == "admin":
+    st.title("🔐 Configurações de Segurança")
+    
+    with st.form("form_senha"):
+        st.subheader("Alterar Senha Master do Administrador")
+        senha_atual = st.text_input("Senha Master Atual", type="password")
+        nova_senha = st.text_input("Nova Senha Master", type="password")
+        confirma_senha = st.text_input("Confirme a Nova Senha", type="password")
+        
+        atualizar_senha = st.form_submit_button("💾 ATUALIZAR SENHA MASTER", use_container_width=True)
+        
+        if atualizar_senha:
+            if senha_atual != buscar_senha():
+                st.error("❌ A senha master atual informada está incorreta.")
+            elif not nova_senha.strip():
+                st.error("❌ A nova senha não pode estar em branco.")
+            elif nova_senha != confirma_senha:
+                st.error("❌ As novas senhas não coincidem.")
+            else:
+                alterar_senha(nova_senha.strip())
+                st.success("✅ Senha master alterada com sucesso!")
