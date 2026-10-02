@@ -6,6 +6,7 @@ from datetime import date
 from io import BytesIO
 import json
 import requests  # Necessário para enviar/puxar dados de outros sites/APIs
+import urllib.parse  # Para tratar URLs com parâmetros de busca
 
 # =========================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -95,7 +96,7 @@ criar_banco()
 
 
 # =========================================================
-# FUNÇÕES DE APOIO E DADOS (E INTEGRAÇÃO EXTERNA)
+# FUNÇÕES DE APOIO E DADOS (E INTEGRAÇÃO EXTERNA INTELIGENTE)
 # =========================================================
 
 def buscar_senha():
@@ -187,11 +188,13 @@ def gerar_backup_json():
     return json.dumps(dados_backup, ensure_ascii=False, indent=4)
 
 
-# EXEMPLO DE FUNÇÃO PARA PUXAR DADOS DE UM SITE/API EXTERNA (CASO NECESSÁRIO)
-def puxar_dados_site_externo():
+# INTEGRAÇÃO EXTERNA: Puxa dados do colaborador e mês específico antes de redirecionar
+def puxar_dados_colaborador_externo(nome_colaborador, mes, ano):
     try:
-        # Substitua pela URL da API do site externo que deseja puxar informações
-        resposta = requests.get("https://api.exemplo.com/dados", timeout=5)
+        nome_tratado = urllib.parse.quote(nome_colaborador)
+        url_api = f"https://api.exemplo.com/dados?colaborador={nome_tratado}&mes={mes}&ano={ano}"
+        
+        resposta = requests.get(url_api, timeout=5)
         if resposta.status_code == 200:
             return resposta.json()
     except Exception:
@@ -199,10 +202,8 @@ def puxar_dados_site_externo():
     return None
 
 
-# EXEMPLO DE FUNÇÃO PARA ENVIAR DADOS PARA UM SITE/API EXTERNA
 def enviar_dados_para_externo(dados_payload):
     try:
-        # Substitua pela URL do Webhook ou Endpoint do outro site
         url_destino = "https://seu-sistema-externo.com/api/receber"
         resposta = requests.post(url_destino, json=dados_payload, timeout=5)
         return resposta.status_code == 200
@@ -274,7 +275,7 @@ if not st.session_state.autenticado:
         else:
             df_acessos = buscar_acessos()
             if df_acessos.empty:
-                st.warning("⚠️️ Nenhum acesso de colaborador configurado pelo Administrador.")
+                st.warning("⚠ Nenhum acesso de colaborador configurado pelo Administrador.")
             else:
                 colab_escolhido = st.selectbox("Selecione seu perfil", df_acessos["nome"].tolist())
                 senha_colab = st.text_input("Senha de acesso pessoal", type="password", key="senha_colab_input")
@@ -295,7 +296,7 @@ if not st.session_state.autenticado:
 
 
 # =========================================================
-# MENU LATERAL REFINADO
+# MENU LATERAL REFINADO (COM PESQUISA DE COLABORADOR E MÊS)
 # =========================================================
 
 st.sidebar.markdown("## ⚡ PRODUCT")
@@ -306,9 +307,35 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Atalho de link externo integrado no menu lateral
+# Seção de Pesquisa para Integração Externa por Colaborador e Mês
 st.sidebar.markdown("### 🌐 Integração Externa")
-st.sidebar.link_button("🔗 Acessar Site / Sistema Externo", "https://provet-korus.pixeonkorus.com/RotinaDiaria/Situacao.aspx?ad=provet", use_container_width=True)
+df_cols_sidebar = buscar_colaboradores()
+lista_nomes_sidebar = df_cols_sidebar["nome"].tolist() if not df_cols_sidebar.empty else []
+
+if lista_nomes_sidebar:
+    colab_consulta = st.sidebar.selectbox("🔍 Colaborador Alvo", lista_nomes_sidebar, key="colab_pesquisa_sidebar")
+    
+    # Dicionário de meses para facilitar a navegação
+    meses_dict = {
+        "Janeiro": "01", "Fevereiro": "02", "Março": "03", "Abril": "04",
+        "Maio": "05", "Junho": "06", "Julho": "07", "Agosto": "08",
+        "Setembro": "09", "Outubro": "10", "Novembro": "11", "Dezembro": "12"
+    }
+    
+    col_m1, col_m2 = st.sidebar.columns(2)
+    with col_m1:
+        mes_escolhido_nome = st.selectbox("📅 Mês", list(meses_dict.keys()), index=date.today().month - 1)
+        mes_num = meses_dict[mes_escolhido_nome]
+    with col_m2:
+        ano_escolhido = st.number_input("📅 Ano", min_value=2020, max_value=2035, value=date.today().year, step=1)
+    
+    # Monta a URL dinâmica injetando tanto o colaborador quanto o mês/ano selecionados
+    url_base_externa = "https://provet-korus.pixeonkorus.com/RotinaDiaria/Situacao.aspx?ad=provet"
+    url_dinamica = f"{url_base_externa}&colaborador={urllib.parse.quote(colab_consulta)}&mes={mes_num}&ano={ano_escolhido}"
+    
+    st.sidebar.link_button(f"🔗 Acessar Sistema ({mes_escolhido_nome}/{ano_escolhido})", url_dinamica, use_container_width=True)
+else:
+    st.sidebar.info("Cadastre colaboradores para habilitar a busca personalizada.")
 
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
@@ -488,7 +515,7 @@ if pagina == "📊 Dashboard Executivo" and st.session_state.perfil == "admin":
 
 
 # =========================================================
-# LANÇAR PRODUTIVIDADE (COM INTEGRAÇÃO DE ENVIO EXTERNO)
+# LANÇAR PRODUTIVIDADE
 # =========================================================
 
 elif pagina == "📝 Lançar Produtividade":
@@ -527,7 +554,6 @@ elif pagina == "📝 Lançar Produtividade":
             salvar = st.form_submit_button("💾 SALVAR REGISTRO OFICIAL", use_container_width=True)
 
             if salvar:
-                # 1. Salva no banco de dados local SQLite
                 conn = conectar()
                 conn.execute(
                     """
@@ -539,7 +565,6 @@ elif pagina == "📝 Lançar Produtividade":
                 conn.commit()
                 conn.close()
 
-                # 2. Envia os dados simultaneamente para o site/sistema externo (API/Webhook)
                 payload_externo = {
                     "data": str(data_lancamento),
                     "colaborador": colaborador,
@@ -551,7 +576,6 @@ elif pagina == "📝 Lançar Produtividade":
                     "observacao": observacao.strip()
                 }
                 
-                # Executa o disparo (comentado se não houver endpoint ativo configurado)
                 # enviado_externamente = enviar_dados_para_externo(payload_externo)
 
                 st.success("✅ Atividade registrada e salva no banco de dados com sucesso!")
@@ -698,7 +722,7 @@ elif pagina == "🗑️ Excluir Histórico" and st.session_state.perfil == "admi
                     st.warning(f"⚠️ Nenhum registro encontrado com o ID {id_para_excluir}.")
 
         with col_del2:
-            st.subheader("⚠️️ Zona de Perigo (Limpeza Total)")
+            st.subheader("⚠ Zona de Perigo (Limpeza Total)")
             st.write("Atenção: Esta ação removerá **todos** os lançamentos salvos no banco de dados permanentemente.")
             
             confirmar_limpeza = st.checkbox("Estou ciente e quero limpar todo o histórico")
@@ -773,7 +797,7 @@ elif pagina == "📥 Importar Dados" and st.session_state.perfil == "admin":
                 st.success(f"✅ Importação concluída! {sucessos} registros inseridos com sucesso." + (f" ({erros_linha} linhas ignoradas por erro nos dados)" if erros_linha > 0 else ""))
 
         except Exception as e:
-            st.error(f"❌ Erro ao processar o arquivo. Verifique se instalou as dependências (comando no terminal: pip install openpyxl xlrd). Detalhe técnico: {repr(e)}")
+            st.error(f"❌ Erro ao processar o arquivo. Verifique se instalou as dependências. Detalhe técnico: {repr(e)}")
 
 
 # =========================================================
@@ -799,7 +823,10 @@ elif pagina == "📋 Histórico Geral":
 
 elif pagina == "📥 Backup & Exportação" and st.session_state.perfil == "admin":
     st.title("📥 Backup & Exportação")
+    st.caption("Faça o download de todos os dados do sistema em formato JSON para fins de segurança.")
+    
     dados_json = gerar_backup_json()
+    
     st.download_button(
         label="📥 Baixar Backup Completo (JSON)",
         data=dados_json,
@@ -807,19 +834,3 @@ elif pagina == "📥 Backup & Exportação" and st.session_state.perfil == "admi
         mime="application/json",
         use_container_width=True
     )
-
-
-# =========================================================
-# SEGURANÇA / SENHA
-# =========================================================
-
-elif pagina == "🔐 Segurança / Senha" and st.session_state.perfil == "admin":
-    st.title("🔐 Alterar Senha Master")
-    with st.form("form_senha"):
-        nova_senha = st.text_input("Nova Senha Master", type="password")
-        salvar_senha = st.form_submit_button("Alterar Senha", use_container_width=True)
-
-        if salvar_senha:
-            if nova_senha.strip():
-                alterar_senha(nova_senha.strip())
-                st.success("✅ Senha alterada com sucesso!")
