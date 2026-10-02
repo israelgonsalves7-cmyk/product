@@ -188,11 +188,12 @@ def gerar_backup_json():
     return json.dumps(dados_backup, ensure_ascii=False, indent=4)
 
 
-# INTEGRAÇÃO EXTERNA: Puxa dados do colaborador e mês específico antes de redirecionar
+# INTEGRAÇÃO EXTERNA: Puxa dados de produtividade do colaborador e mês específico direto da API/Extensão
 def puxar_dados_colaborador_externo(nome_colaborador, mes, ano):
     try:
         nome_tratado = urllib.parse.quote(nome_colaborador)
-        url_api = f"https://api.exemplo.com/dados?colaborador={nome_tratado}&mes={mes}&ano={ano}"
+        # Endpoint de exemplo que retorna os dados do colaborador mapeados na extensão/sistema
+        url_api = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/api/produtividade?colaborador={nome_tratado}&mes={mes}&ano={ano}"
         
         resposta = requests.get(url_api, timeout=5)
         if resposta.status_code == 200:
@@ -296,7 +297,7 @@ if not st.session_state.autenticado:
 
 
 # =========================================================
-# MENU LATERAL REFINADO (COM PESQUISA DE COLABORADOR E MÊS)
+# MENU LATERAL REFINADO (COM PESQUISA E PUXADA DE DADOS DA EXTENSÃO)
 # =========================================================
 
 st.sidebar.markdown("## ⚡ PRODUCT")
@@ -307,15 +308,14 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Seção de Pesquisa para Integração Externa por Colaborador e Mês
-st.sidebar.markdown("### 🌐 Integração Externa")
+# Seção de Pesquisa e Importação Direta da Extensão/Sistema Externo
+st.sidebar.markdown("### 🌐 Integração / Extensão")
 df_cols_sidebar = buscar_colaboradores()
 lista_nomes_sidebar = df_cols_sidebar["nome"].tolist() if not df_cols_sidebar.empty else []
 
 if lista_nomes_sidebar:
     colab_consulta = st.sidebar.selectbox("🔍 Colaborador Alvo", lista_nomes_sidebar, key="colab_pesquisa_sidebar")
     
-    # Dicionário de meses para facilitar a navegação
     meses_dict = {
         "Janeiro": "01", "Fevereiro": "02", "Março": "03", "Abril": "04",
         "Maio": "05", "Junho": "06", "Julho": "07", "Agosto": "08",
@@ -329,11 +329,20 @@ if lista_nomes_sidebar:
     with col_m2:
         ano_escolhido = st.number_input("📅 Ano", min_value=2020, max_value=2035, value=date.today().year, step=1)
     
-    # Monta a URL dinâmica injetando tanto o colaborador quanto o mês/ano selecionados
     url_base_externa = "https://provet-korus.pixeonkorus.com/RotinaDiaria/Situacao.aspx?ad=provet"
     url_dinamica = f"{url_base_externa}&colaborador={urllib.parse.quote(colab_consulta)}&mes={mes_num}&ano={ano_escolhido}"
     
-    st.sidebar.link_button(f"🔗 Acessar Sistema ({mes_escolhido_nome}/{ano_escolhido})", url_dinamica, use_container_width=True)
+    st.sidebar.link_button(f"🔗 Abrir Sistema ({mes_escolhido_nome}/{ano_escolhido})", url_dinamica, use_container_width=True)
+
+    # Botão para puxar a produtividade diretamente da extensão/API para dentro do aplicativo
+    if st.sidebar.button("📥 Puxar Dados da Extensão", use_container_width=True):
+        with st.spinner("Buscando dados na extensão/sistema..."):
+            dados_externos = puxar_dados_colaborador_externo(colab_consulta, mes_num, ano_escolhido)
+            if dados_externos:
+                st.sidebar.success(f"✅ Produtividade de {colab_consulta} puxada com sucesso!")
+                # Aqui você pode salvar automaticamente no banco ou injetar na sessão se desejar
+            else:
+                st.sidebar.warning("⚠️ Nenhum dado retornado ou endpoint indisponível no momento.")
 else:
     st.sidebar.info("Cadastre colaboradores para habilitar a busca personalizada.")
 
@@ -576,7 +585,7 @@ elif pagina == "📝 Lançar Produtividade":
                     "observacao": observacao.strip()
                 }
                 
-                # enviado_externamente = enviar_dados_para_externo(payload_externo)
+                enviar_dados_para_externo(payload_externo)
 
                 st.success("✅ Atividade registrada e salva no banco de dados com sucesso!")
                 st.rerun()
@@ -682,6 +691,19 @@ elif pagina == "🔑 Configurar Acessos" and st.session_state.perfil == "admin":
                 conn.close()
                 st.success(f"✅ Credenciais salvas para {colab_nome}!")
                 st.rerun()
+
+
+# =========================================================
+# HISTÓRICO GERAL
+# =========================================================
+
+elif pagina == "📋 Histórico Geral":
+    st.title("📋 Histórico Geral de Produtividade")
+    df_hist = buscar_produtividade()
+    if df_hist.empty:
+        st.info("Nenhum registro encontrado.")
+    else:
+        st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
 
 # =========================================================
@@ -794,27 +816,9 @@ elif pagina == "📥 Importar Dados" and st.session_state.perfil == "admin":
 
                 conn.commit()
                 conn.close()
-                st.success(f"✅ Importação concluída! {sucessos} registros inseridos com sucesso." + (f" ({erros_linha} linhas ignoradas por erro nos dados)" if erros_linha > 0 else ""))
-
+                st.success(f"✅ Importação concluída! {sucessos} registros inseridos com sucesso.")
         except Exception as e:
-            st.error(f"❌ Erro ao processar o arquivo. Verifique se instalou as dependências. Detalhe técnico: {repr(e)}")
-
-
-# =========================================================
-# HISTÓRICO GERAL
-# =========================================================
-
-elif pagina == "📋 Histórico Geral":
-    st.title("📋 Histórico Geral de Lançamentos")
-    df_hist = buscar_produtividade()
-
-    if df_hist.empty:
-        st.info("Nenhum registro encontrado.")
-    else:
-        if st.session_state.perfil != "admin":
-            df_hist = df_hist[df_hist["colaborador"] == st.session_state.usuario_logado]
-
-        st.dataframe(df_hist, use_container_width=True, hide_index=True)
+            st.error(f"❌ Erro ao processar arquivo: {e}")
 
 
 # =========================================================
@@ -822,11 +826,11 @@ elif pagina == "📋 Histórico Geral":
 # =========================================================
 
 elif pagina == "📥 Backup & Exportação" and st.session_state.perfil == "admin":
-    st.title("📥 Backup & Exportação")
-    st.caption("Faça o download de todos os dados do sistema em formato JSON para fins de segurança.")
-    
+    st.title("📥 Backup & Exportação de Dados")
+    st.caption("Faça o download do backup completo do sistema em formato JSON ou exporte relatórios consolidados em Excel.")
+
     dados_json = gerar_backup_json()
-    
+
     st.download_button(
         label="📥 Baixar Backup Completo (JSON)",
         data=dados_json,
@@ -834,3 +838,44 @@ elif pagina == "📥 Backup & Exportação" and st.session_state.perfil == "admi
         mime="application/json",
         use_container_width=True
     )
+
+    df_export = buscar_produtividade()
+    if not df_export.empty:
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            df_export.to_excel(writer, index=False, sheet_name="Produtividade")
+        
+        st.download_button(
+            label="📊 Baixar Relatório Completo em Excel (.xlsx)",
+            data=buffer.getvalue(),
+            file_name=f"relatorio_produtividade_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+
+# =========================================================
+# SEGURANÇA / SENHA
+# =========================================================
+
+elif pagina == "🔐 Segurança / Senha" and st.session_state.perfil == "admin":
+    st.title("🔐 Configurações de Segurança")
+    
+    with st.form("form_senha"):
+        st.subheader("Alterar Senha Master do Administrador")
+        senha_atual = st.text_input("Senha Master Atual", type="password")
+        nova_senha = st.text_input("Nova Senha Master", type="password")
+        confirma_senha = st.text_input("Confirme a Nova Senha", type="password")
+        
+        atualizar_senha = st.form_submit_button("💾 ATUALIZAR SENHA MASTER", use_container_width=True)
+        
+        if atualizar_senha:
+            if senha_atual != buscar_senha():
+                st.error("❌ A senha master atual informada está incorreta.")
+            elif not nova_senha.strip():
+                st.error("❌ A nova senha não pode estar em branco.")
+            elif nova_senha != confirma_senha:
+                st.error("❌ As novas senhas não coincidem.")
+            else:
+                alterar_senha(nova_senha.strip())
+                st.success("✅ Senha master alterada com sucesso!")
