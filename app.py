@@ -7,6 +7,15 @@ from io import BytesIO
 import json
 import requests
 import urllib.parse
+import time
+
+# Importações do Selenium para a Automação Inteligente (RPA)
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 # =========================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -96,7 +105,7 @@ criar_banco()
 
 
 # =========================================================
-# FUNÇÕES DE APOIO E INTEGRAÇÃO EXTERNA DE PRODUTIVIDADE
+# FUNÇÕES DE APOIO E ROBÔ DE AUTOMAÇÃO (SELENIUM)
 # =========================================================
 
 def buscar_senha():
@@ -188,20 +197,48 @@ def gerar_backup_json():
     return json.dumps(dados_backup, ensure_ascii=False, indent=4)
 
 
-# INTEGRAÇÃO EXTERNA: Puxa a produtividade focada na Unidade e no Usuário de Atendimento
-def puxar_produtividade_usuario_externo(unidade, usuario_atendimento, mes, ano):
+# ROBÔ DE AUTOMAÇÃO INTELIGENTE (SELENIUM) PARA PUXAR DADOS DO SISTEMA KORUS
+def puxar_produtividade_usuario_rpa(unidade, usuario_atendimento, mes, ano):
+    options = webdriver.ChromeOptions()
+    # Remova o comentário abaixo se quiser rodar o navegador totalmente invisível (Headless)
+    # options.add_argument("--headless")
+    options.add_argument("--start-maximized")
+    options.add_argument("--disable-gpu")
+    
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    
     try:
-        uni_tratada = urllib.parse.quote(unidade)
-        usu_tratado = urllib.parse.quote(usuario_atendimento)
+        # 1. Acessa a página do sistema
+        url_alvo = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/Situacao.aspx?ad=provet&unidade={urllib.parse.quote(unidade)}&usuario={urllib.parse.quote(usuario_atendimento)}&mes={mes}&ano={ano}"
+        driver.get(url_alvo)
         
-        url_api = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/api/produtividade_usuario?unidade={uni_tratada}&usuario={usu_tratado}&mes={mes}&ano={ano}"
+        # 2. Aguarda o usuário fazer o login manual caso a sessão expire (damos 20 segundos para login se necessário)
+        time.sleep(5)
         
-        resposta = requests.get(url_api, timeout=5)
-        if resposta.status_code == 200:
-            return resposta.json()
-    except Exception:
+        # 3. Faz a varredura da tabela de resultados na tela do Korus
+        wait = WebDriverWait(driver, 15)
+        
+        # Tentativa de extrair linhas de tabelas do relatório gerado
+        registros_coletados = []
+        try:
+            tabelas = wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "table")))
+            for tabela in tabelas:
+                linhas = tabela.find_elements(By.TAG_NAME, "tr")
+                for linha in linhas[1:]: # Ignora o cabeçalho
+                    colunas = linha.find_elements(By.TAG_NAME, "td")
+                    if len(colunas) > 1:
+                        dados_coluna = [col.text.strip() for col in colunas]
+                        registros_coletados.append(dados_coluna)
+        except Exception:
+            pass
+
+        return registros_coletados
+        
+    except Exception as e:
+        print(f"Erro no robô de automação: {e}")
         return None
-    return None
+    finally:
+        driver.quit()
 
 
 def enviar_dados_para_externo(dados_payload):
@@ -298,7 +335,7 @@ if not st.session_state.autenticado:
 
 
 # =========================================================
-# MENU LATERAL REFINADO (COM FILTROS DE UNIDADE E USUÁRIO)
+# MENU LATERAL REFINADO (COM FILTROS E ROBÔ RPA)
 # =========================================================
 
 st.sidebar.markdown("## ⚡ PRODUCT")
@@ -309,7 +346,7 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.sidebar.markdown("### 🌐 Puxar Produtividade")
+st.sidebar.markdown("### 🌐 Robô de Extração (RPA)")
 
 lista_unidades = ["PROVET-APOIO", "PROVET-MATRIZ", "PROVET-FILIAL"]
 unidade_selecionada = st.sidebar.selectbox("🏥 Unidade", lista_unidades, index=0)
@@ -320,7 +357,7 @@ lista_nomes_sidebar = df_cols_sidebar["nome"].tolist() if not df_cols_sidebar.em
 if lista_nomes_sidebar:
     usuario_atendimento = st.sidebar.selectbox("👨‍⚕️ Usuário de Atendimento", lista_nomes_sidebar)
 else:
-    usuario_atendimento = st.sidebar.text_input("👨‍⚕️ Usuário de Atendimento", value="Atendente Padrão")
+    usuario_atendimento = st.sidebar.text_input("👨‍⚕️️ Usuário de Atendimento", value="Atendente Padrão")
 
 meses_dict = {
     "Janeiro": "01", "Fevereiro": "02", "Março": "03", "Abril": "04",
@@ -341,17 +378,17 @@ if usuario_atendimento:
 
 st.sidebar.link_button(f"🔗 Abrir Sistema ({unidade_selecionada})", url_base_externa, use_container_width=True)
 
-# Botão principal para puxar a produtividade pelo usuário e unidade informados
-if st.sidebar.button("📥 Puxar Produtividade do Usuário", use_container_width=True):
+# Acionamento do Robô RPA via Botão
+if st.sidebar.button("🤖 Executar Robô e Puxar Dados", use_container_width=True):
     if not usuario_atendimento.strip():
         st.sidebar.warning("⚠️ Selecione ou informe o usuário de atendimento.")
     else:
-        with st.spinner(f"Buscando produtividade de '{usuario_atendimento}' ({unidade_selecionada})..."):
-            dados_prod = puxar_produtividade_usuario_externo(unidade_selecionada, usuario_atendimento, mes_num, ano_escolhido)
-            if dados_prod:
-                st.sidebar.success(f"✅ Produtividade de '{usuario_atendimento}' recuperada com sucesso!")
+        with st.spinner(f"Robô navegando no sistema para '{usuario_atendimento}'..."):
+            resultados_rpa = puxar_produtividade_usuario_rpa(unidade_selecionada, usuario_atendimento, mes_num, ano_escolhido)
+            if resultados_rpa:
+                st.sidebar.success(f"✅ Robô finalizou a extração com sucesso!")
             else:
-                st.sidebar.warning("⚠️️ Nenhum registro de produtividade encontrado para este usuário.")
+                st.sidebar.warning("⚠ O robô não encontrou registros na página carregada.")
 
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
