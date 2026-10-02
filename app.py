@@ -5,8 +5,8 @@ import plotly.express as px
 from datetime import date
 from io import BytesIO
 import json
-import os
-import glob
+import requests  # Necessário para enviar/puxar dados de outros sites/APIs
+import urllib.parse  # Para tratar URLs com parâmetros de busca
 
 # =========================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -96,7 +96,7 @@ criar_banco()
 
 
 # =========================================================
-# FUNÇÕES DE APOIO E LEITURA AUTOMÁTICA DE EXCEL
+# FUNÇÕES DE APOIO E DADOS (E INTEGRAÇÃO EXTERNA INTELIGENTE)
 # =========================================================
 
 def buscar_senha():
@@ -188,43 +188,18 @@ def gerar_backup_json():
     return json.dumps(dados_backup, ensure_ascii=False, indent=4)
 
 
-# NOVA FUNÇÃO: Busca o último arquivo Excel na pasta e conta pacientes por colaborador
-def buscar_ultimo_arquivo_excel_e_contar_pacientes(pasta_diretorio):
+# INTEGRAÇÃO EXTERNA: Puxa dados do colaborador e mês específico antes de redirecionar
+def puxar_dados_colaborador_externo(nome_colaborador, mes, ano):
     try:
-        if not os.path.exists(pasta_diretorio):
-            return None, "O diretório informado não existe."
-
-        # Procura por arquivos .xlsx e .xls na pasta
-        arquivos_xlsx = glob.glob(os.path.join(pasta_diretorio, "*.xlsx"))
-        arquivos_xls = glob.glob(os.path.join(pasta_diretorio, "*.xls"))
-        todos_arquivos = arquivos_xlsx + arquivos_xls
-
-        if not todos_arquivos:
-            return None, "Nenhum arquivo Excel encontrado na pasta especificada."
-
-        # Pega o arquivo mais recente baseado na data de modificação
-        ultimo_arquivo = max(todos_arquivos, key=os.path.getmtime)
-
-        # Lê o arquivo Excel (ajuste os nomes das colunas 'colaborador' e 'paciente' conforme sua planilha real)
-        df_excel = pd.read_excel(ultimo_arquivo)
-
-        # Exemplo de tratamento: agrupando por colaborador para contar quantas vezes ele aparece (cadastros de pacientes)
-        # Certifique-se de que as colunas na sua planilha se chamem algo parecido com 'colaborador' e 'paciente'
-        col_colab = next((c for c in df_excel.columns if 'colaborador' in c.lower() or 'usuario' in c.lower() or 'atendente' in c.lower()), None)
+        nome_tratado = urllib.parse.quote(nome_colaborador)
+        url_api = f"https://api.exemplo.com/dados?colaborador={nome_tratado}&mes={mes}&ano={ano}"
         
-        if not col_colab:
-            return None, f"Coluna de colaborador não identificada no arquivo. Colunas disponíveis: {list(df_excel.columns)}"
-
-        # Agrupa e conta os cadastros por colaborador
-        resumo_contagem = df_excel.groupby(col_colab).size().reset_index(name='total_pacientes')
-        
-        return {
-            "arquivo_lido": os.path.basename(ultimo_arquivo),
-            "dados": resumo_contagem
-        }, None
-
-    except Exception as e:
-        return None, str(e)
+        resposta = requests.get(url_api, timeout=5)
+        if resposta.status_code == 200:
+            return resposta.json()
+    except Exception:
+        return None
+    return None
 
 
 def enviar_dados_para_externo(dados_payload):
@@ -321,7 +296,7 @@ if not st.session_state.autenticado:
 
 
 # =========================================================
-# MENU LATERAL REFINADO (BUSCA AUTOMÁTICA DO ÚLTIMO EXCEL)
+# MENU LATERAL REFINADO (COM PESQUISA DE COLABORADOR E MÊS)
 # =========================================================
 
 st.sidebar.markdown("## ⚡ PRODUCT")
@@ -332,24 +307,35 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.sidebar.markdown("### 📁 Importação Automática (Excel)")
-pasta_caminho_input = st.sidebar.text_input("Caminho da Pasta dos Relatórios", value="./relatorios")
+# Seção de Pesquisa para Integração Externa por Colaborador e Mês
+st.sidebar.markdown("### 🌐 Integração Externa")
+df_cols_sidebar = buscar_colaboradores()
+lista_nomes_sidebar = df_cols_sidebar["nome"].tolist() if not df_cols_sidebar.empty else []
 
-# Botão para buscar o último Excel e processar a quantidade de cadastros
-if st.sidebar.button("🔄 Puxar Cadastros do Último Excel", use_container_width=True):
-    with st.spinner("Buscando o arquivo Excel mais recente..."):
-        resultado_leitura, erro_msg = buscar_ultimo_arquivo_excel_e_contar_pacientes(pasta_caminho_input)
-        
-        if erro_msg:
-            st.sidebar.error(f"⚠️ {erro_msg}")
-        else:
-            st.sidebar.success(f"✅ Arquivo '{resultado_leitura['arquivo_lido']}' processado!")
-            st.session_state["dados_excel_recente"] = resultado_leitura["dados"]
-
-# Se houver dados processados na sessão, exibe um breve resumo na barra lateral
-if "dados_excel_recente" in st.session_state:
-    st.sidebar.markdown("#### 📊 Resumo Recente")
-    st.sidebar.dataframe(st.session_state["dados_excel_recente"], hide_index=True, use_container_width=True)
+if lista_nomes_sidebar:
+    colab_consulta = st.sidebar.selectbox("🔍 Colaborador Alvo", lista_nomes_sidebar, key="colab_pesquisa_sidebar")
+    
+    # Dicionário de meses para facilitar a navegação
+    meses_dict = {
+        "Janeiro": "01", "Fevereiro": "02", "Março": "03", "Abril": "04",
+        "Maio": "05", "Junho": "06", "Julho": "07", "Agosto": "08",
+        "Setembro": "09", "Outubro": "10", "Novembro": "11", "Dezembro": "12"
+    }
+    
+    col_m1, col_m2 = st.sidebar.columns(2)
+    with col_m1:
+        mes_escolhido_nome = st.selectbox("📅 Mês", list(meses_dict.keys()), index=date.today().month - 1)
+        mes_num = meses_dict[mes_escolhido_nome]
+    with col_m2:
+        ano_escolhido = st.number_input("📅 Ano", min_value=2020, max_value=2035, value=date.today().year, step=1)
+    
+    # Monta a URL dinâmica injetando tanto o colaborador quanto o mês/ano selecionados
+    url_base_externa = "https://provet-korus.pixeonkorus.com/RotinaDiaria/Situacao.aspx?ad=provet"
+    url_dinamica = f"{url_base_externa}&colaborador={urllib.parse.quote(colab_consulta)}&mes={mes_num}&ano={ano_escolhido}"
+    
+    st.sidebar.link_button(f"🔗 Acessar Sistema ({mes_escolhido_nome}/{ano_escolhido})", url_dinamica, use_container_width=True)
+else:
+    st.sidebar.info("Cadastre colaboradores para habilitar a busca personalizada.")
 
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
@@ -395,6 +381,456 @@ if st.sidebar.button("🚪 ENCERRAR SESSÃO", use_container_width=True):
 
 
 # =========================================================
-# RESTANTE DO CÓDIGO (DASHBOARD, FORMULÁRIOS E GESTÃO)
+# DASHBOARD EXECUTIVO (ESTILO POWER BI)
 # =========================================================
-# (O restante das páginas continua idêntico ao seu app original)
+
+if pagina == "📊 Dashboard Executivo" and st.session_state.perfil == "admin":
+    st.title("📊 Dashboard Executivo — Business Intelligence")
+    st.caption("Painel analítico integrado com filtros globais e visualizações consolidadas")
+
+    df = buscar_produtividade()
+    if df.empty:
+        st.info("Ainda não existem registros de produtividade para renderizar o painel.")
+        st.stop()
+
+    st.markdown("### 🎛️ Filtros Globais")
+    col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
+    lista_colaboradores = sorted(df["colaborador"].unique().tolist())
+
+    with col_f1:
+        colaborador_filtro = st.selectbox("👤 Filtrar por Colaborador", ["Todos os colaboradores"] + lista_colaboradores)
+
+    data_min = df["data"].min().date()
+    data_max = df["data"].max().date()
+
+    with col_f2:
+        periodo = st.date_input("📅 Janela Temporal (Filtro de Data)", value=(data_min, data_max), min_value=data_min, max_value=data_max)
+
+    with col_f3:
+        st.write("")
+        st.write("")
+        if st.button("🔄 Atualizar Dados", use_container_width=True):
+            st.rerun()
+
+    if isinstance(periodo, tuple) and len(periodo) == 2:
+        inicio, fim = periodo
+        df_filtrado = df[(df["data"].dt.date >= inicio) & (df["data"].dt.date <= fim)].copy()
+    else:
+        df_filtrado = df.copy()
+
+    if colaborador_filtro != "Todos os colaboradores":
+        df_filtrado = df_filtrado[df_filtrado["colaborador"] == colaborador_filtro].copy()
+
+    if df_filtrado.empty:
+        st.warning("⚠️ Não há dados consolidados para os parâmetros selecionados.")
+        st.stop()
+
+    erro = int(df_filtrado["sysvet_erro"].sum())
+    exito = int(df_filtrado["sysvet_exito"].sum())
+    faturado = int(df_filtrado["faturado"].sum())
+    auditoria = int(df_filtrado["auditoria"].sum())
+    total_sysvet = erro + exito
+    produtividade = erro + exito + faturado + auditoria
+    taxa_media = (exito / total_sysvet * 100) if total_sysvet > 0 else 0
+
+    st.markdown("---")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("❌ Erro SYSVET", f"{erro:,}")
+    c2.metric("✅ Êxito SYSVET", f"{exito:,}")
+    c3.metric("📁 Faturado", f"{faturado:,}")
+    c4.metric("🔍 Auditoria", f"{auditoria:,}")
+    c5.metric("📊 Volume Total", f"{produtividade:,}")
+    c6.metric("🎯 Taxa Êxito", f"{taxa_media:.1f}%")
+    st.markdown("---")
+
+    col_g1, col_g2 = st.columns(2)
+
+    with col_g1:
+        st.subheader("📈 Evolução Temporal da Produtividade")
+        df_tempo = df_filtrado.groupby(df_filtrado["data"].dt.date)[["sysvet_exito", "faturado", "auditoria"]].sum().reset_index()
+        df_tempo_melted = df_tempo.melt(id_vars=["data"], value_vars=["sysvet_exito", "faturado", "auditoria"], var_name="Métrica", value_name="Quantidade")
+        
+        fig_linha = px.line(
+            df_tempo_melted, 
+            x="data", 
+            y="Quantidade", 
+            color="Métrica", 
+            markers=True,
+            template="plotly_dark" if st.session_state.modo_noturno else "plotly_white"
+        )
+        fig_linha.update_layout(xaxis_title="Data", yaxis_title="Volume", legend_title="Indicadores")
+        st.plotly_chart(fig_linha, use_container_width=True)
+
+    with col_g2:
+        st.subheader("👥 Produtividade por Colaborador")
+        df_colab = df_filtrado.groupby("colaborador")[["sysvet_exito", "faturado", "auditoria", "sysvet_erro"]].sum().reset_index()
+        df_colab_melted = df_colab.melt(id_vars=["colaborador"], value_vars=["sysvet_exito", "faturado", "auditoria", "sysvet_erro"], var_name="Categoria", value_name="Total")
+        
+        fig_barra = px.bar(
+            df_colab_melted, 
+            x="colaborador", 
+            y="Total", 
+            color="Categoria", 
+            barmode="stack",
+            template="plotly_dark" if st.session_state.modo_noturno else "plotly_white"
+        )
+        fig_barra.update_layout(xaxis_title="Colaborador", yaxis_title="Total Acumulado", legend_title="Métricas")
+        st.plotly_chart(fig_barra, use_container_width=True)
+
+    col_g3, col_g4 = st.columns(2)
+
+    with col_g3:
+        st.subheader("🍩 Distribuição dos Tipos de Atividades")
+        df_pizza = pd.DataFrame({
+            "Categoria": ["Sysvet Êxito", "Sysvet Erro", "Faturado", "Auditoria"],
+            "Total": [exito, erro, faturado, auditoria]
+        })
+        fig_pizza = px.pie(
+            df_pizza, 
+            names="Categoria", 
+            values="Total", 
+            hole=0.4,
+            template="plotly_dark" if st.session_state.modo_noturno else "plotly_white"
+        )
+        st.plotly_chart(fig_pizza, use_container_width=True)
+
+    with col_g4:
+        st.subheader("📊 Taxa de Êxito Individual por Colaborador")
+        df_taxa = df_filtrado.groupby("colaborador").agg({
+            "sysvet_exito": "sum",
+            "total_sysvet": "sum"
+        }).reset_index()
+        df_taxa["Taxa (%)"] = df_taxa.apply(lambda x: (x["sysvet_exito"] / x["total_sysvet"] * 100) if x["total_sysvet"] > 0 else 0, axis=1)
+
+        fig_taxa = px.bar(
+            df_taxa,
+            x="colaborador",
+            y="Taxa (%)",
+            text="Taxa (%)",
+            template="plotly_dark" if st.session_state.modo_noturno else "plotly_white"
+        )
+        fig_taxa.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+        fig_taxa.update_layout(xaxis_title="Colaborador", yaxis_title="Taxa de Êxito (%)")
+        st.plotly_chart(fig_taxa, use_container_width=True)
+
+
+# =========================================================
+# LANÇAR PRODUTIVIDADE
+# =========================================================
+
+elif pagina == "📝 Lançar Produtividade":
+    st.title("📝 Lançar Produtividade")
+    st.caption("Preencha os indicadores correspondentes às entregas diárias")
+
+    colaboradores = buscar_colaboradores()
+
+    if colaboradores.empty:
+        st.warning("⚠️ Cadastre colaboradores antes de realizar lançamentos.")
+    else:
+        with st.form("form_produtividade"):
+            data_lancamento = st.date_input("📅 Data de Referência", value=date.today())
+
+            if st.session_state.perfil == "admin":
+                colaborador = st.selectbox("👤 Colaborador Responsável", colaboradores["nome"].tolist())
+            else:
+                colaborador = st.session_state.usuario_logado
+                st.info(f"👤 Registrando atividade em nome de: **{colaborador}**")
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                erro = st.number_input("❌ SYSVET Erro", min_value=0, value=0, step=1)
+            with col2:
+                exito = st.number_input("✅ SYSVET Êxito", min_value=0, value=0, step=1)
+            with col3:
+                faturado = st.number_input("📁 Faturado", min_value=0, value=0, step=1)
+            with col4:
+                auditoria = st.number_input("🔍 Auditoria", min_value=0, value=0, step=1)
+
+            observacao = st.text_area("💬 Observações / Detalhes da Produtividade (Opcional)", placeholder="Descreva algo sobre a produtividade, ocorrências ou detalhes relevantes...")
+
+            total = erro + exito + faturado + auditoria
+            st.markdown(f"### 📊 Total computado do lançamento: `{total}`")
+
+            salvar = st.form_submit_button("💾 SALVAR REGISTRO OFICIAL", use_container_width=True)
+
+            if salvar:
+                conn = conectar()
+                conn.execute(
+                    """
+                    INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria, observacao)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (str(data_lancamento), colaborador, int(erro), int(exito), int(faturado), int(auditoria), observacao.strip())
+                )
+                conn.commit()
+                conn.close()
+
+                payload_externo = {
+                    "data": str(data_lancamento),
+                    "colaborador": colaborador,
+                    "sysvet_erro": int(erro),
+                    "sysvet_exito": int(exito),
+                    "faturado": int(faturado),
+                    "auditoria": int(auditoria),
+                    "total": total,
+                    "observacao": observacao.strip()
+                }
+                
+                # enviado_externamente = enviar_dados_para_externo(payload_externo)
+
+                st.success("✅ Atividade registrada e salva no banco de dados com sucesso!")
+                st.rerun()
+
+
+# =========================================================
+# COLABORADORES
+# =========================================================
+
+elif pagina == "👥 Gerenciar Colaboradores" and st.session_state.perfil == "admin":
+    st.title("👥 Gestão de Colaboradores")
+
+    with st.form("form_colaborador"):
+        st.subheader("➕ Adicionar Novo Membro")
+        nome = st.text_input("Nome Completo do Colaborador")
+        cadastrar = st.form_submit_button("CADASTRAR NOVO MEMBRO", use_container_width=True)
+
+        if cadastrar:
+            if not nome.strip():
+                st.error("Informe o nome do colaborador.")
+            else:
+                try:
+                    conn = conectar()
+                    conn.execute("INSERT INTO colaboradores (nome) VALUES (?)", (nome.strip(),))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"✅ {nome} cadastrado com sucesso!")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("⚠️ Este colaborador já se encontra cadastrado no sistema.")
+
+    colaboradores = buscar_colaboradores()
+    if not colaboradores.empty:
+        st.dataframe(colaboradores[["id", "nome"]], use_container_width=True, hide_index=True)
+
+
+# =========================================================
+# EXCLUIR COLABORADOR
+# =========================================================
+
+elif pagina == "🗑️ Excluir Colaborador" and st.session_state.perfil == "admin":
+    st.title("🗑️ Gerenciamento e Exclusão de Colaboradores")
+    st.caption("Selecione um colaborador para removê-lo definitivamente do cadastro do sistema.")
+
+    colaboradores = buscar_colaboradores()
+
+    if colaboradores.empty:
+        st.info("Nenhum colaborador cadastrado no momento.")
+    else:
+        st.dataframe(colaboradores[["id", "nome"]], use_container_width=True, hide_index=True)
+        st.markdown("---")
+
+        with st.form("form_excluir_colaborador"):
+            st.subheader("❌ Remover Colaborador")
+            colab_para_excluir = st.selectbox("Selecione o colaborador a ser excluído", colaboradores["nome"].tolist())
+            
+            confirmar_exclusao = st.checkbox("Estou ciente de que a remoção excluirá o cadastro do colaborador")
+            deletar_colab = st.form_submit_button("🗑️ EXCLUIR COLABORADOR SELECIONADO", use_container_width=True)
+
+            if deletar_colab:
+                if confirmar_exclusao:
+                    conn = conectar()
+                    cursor = conn.cursor()
+                    
+                    cursor.execute("DELETE FROM colaboradores WHERE nome = ?", (colab_para_excluir,))
+                    cursor.execute("DELETE FROM acessos_colaboradores WHERE nome = ?", (colab_para_excluir,))
+                    
+                    conn.commit()
+                    conn.close()
+                    
+                    st.success(f"✅ O colaborador '{colab_para_excluir}' foi removido com sucesso!")
+                    st.rerun()
+                else:
+                    st.error("❌ Marque a caixa de confirmação acima para autorizar a exclusão.")
+
+
+# =========================================================
+# GERENCIAR ACESSOS
+# =========================================================
+
+elif pagina == "🔑 Configurar Acessos" and st.session_state.perfil == "admin":
+    st.title("🔑 Controle de Acessos Individuais")
+    colaboradores_disp = buscar_colaboradores()
+
+    if not colaboradores_disp.empty:
+        with st.form("form_acesso"):
+            colab_nome = st.selectbox("Colaborador", colaboradores_disp["nome"].tolist())
+            senha_colab = st.text_input("Definir Senha de Acesso", type="password")
+            salvar_acesso = st.form_submit_button("💾 SALVAR CREDENCIAIS", use_container_width=True)
+
+            if salvar_acesso and senha_colab.strip():
+                conn = conectar()
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM acessos_colaboradores WHERE nome = ?", (colab_nome,))
+                existe = cursor.fetchone()
+
+                if existe:
+                    cursor.execute("UPDATE acessos_colaboradores SET senha = ? WHERE nome = ?", (senha_colab.strip(), colab_nome))
+                else:
+                    cursor.execute("INSERT INTO acessos_colaboradores (nome, senha) VALUES (?, ?)", (colab_nome, senha_colab.strip()))
+
+                conn.commit()
+                conn.close()
+                st.success(f"✅ Credenciais salvas para {colab_nome}!")
+                st.rerun()
+
+
+# =========================================================
+# EXCLUIR HISTÓRICO
+# =========================================================
+
+elif pagina == "🗑️ Excluir Histórico" and st.session_state.perfil == "admin":
+    st.title("🗑️ Gerenciamento e Exclusão de Registros")
+    st.caption("Consulte a coluna 'id' dos lançamentos abaixo para realizar exclusões pontuais ou limpezas completas.")
+
+    df_hist = buscar_produtividade()
+
+    if df_hist.empty:
+        st.info("Nenhum registro de produtividade cadastrado para excluir.")
+    else:
+        st.dataframe(df_hist, use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+        
+        col_del1, col_del2 = st.columns(2)
+
+        with col_del1:
+            st.subheader("🗑️ Excluir Lançamento Específico")
+            id_para_excluir = st.number_input("Informe o ID do registro que deseja apagar", min_value=1, step=1)
+            
+            if st.button("❌ APAGAR ESTE REGISTRO", use_container_width=True):
+                conn = conectar()
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM produtividade WHERE id = ?", (int(id_para_excluir),))
+                linhas_afetadas = cursor.rowcount
+                conn.commit()
+                conn.close()
+
+                if linhas_afetadas > 0:
+                    st.success(f"✅ Registro com ID {id_para_excluir} excluído com sucesso!")
+                    st.rerun()
+                else:
+                    st.warning(f"⚠️ Nenhum registro encontrado com o ID {id_para_excluir}.")
+
+        with col_del2:
+            st.subheader("⚠ Zona de Perigo (Limpeza Total)")
+            st.write("Atenção: Esta ação removerá **todos** os lançamentos salvos no banco de dados permanentemente.")
+            
+            confirmar_limpeza = st.checkbox("Estou ciente e quero limpar todo o histórico")
+            
+            if st.button("🚨 EXCLUIR TODO O HISTÓRICO", use_container_width=True):
+                if confirmar_limpeza:
+                    conn = conectar()
+                    conn.execute("DELETE FROM produtividade")
+                    conn.commit()
+                    conn.close()
+                    st.success("✅ Todo o histórico de produtividade foi apagado com sucesso!")
+                    st.rerun()
+                else:
+                    st.error("❌ Marque a caixa de confirmação acima para autorizar a limpeza total.")
+
+
+# =========================================================
+# IMPORTAR DADOS (EXCEL / CSV)
+# =========================================================
+
+elif pagina == "📥 Importar Dados" and st.session_state.perfil == "admin":
+    st.title("📥 Importação de Planilhas (Excel / CSV)")
+    st.caption("Faça upload de arquivos .xlsx, .xls ou .csv contendo os dados de produtividade.")
+
+    arquivo_upload = st.file_uploader("Selecione o arquivo", type=["xlsx", "xls", "csv"])
+
+    if arquivo_upload is not None:
+        try:
+            nome_arquivo = arquivo_upload.name.lower()
+            
+            if nome_arquivo.endswith(".csv"):
+                df_importado = pd.read_csv(arquivo_upload)
+            elif nome_arquivo.endswith(".xlsx"):
+                df_importado = pd.read_excel(arquivo_upload, engine="openpyxl")
+            elif nome_arquivo.endswith(".xls"):
+                df_importado = pd.read_excel(arquivo_upload, engine="xlrd")
+            else:
+                st.error("❌ Formato de arquivo não suportado. Envie um arquivo .csv, .xls ou .xlsx.")
+                st.stop()
+
+            st.success("✅ Arquivo lido com sucesso! Pré-visualização dos dados:")
+            st.dataframe(df_importado.head(), use_container_width=True)
+
+            if st.button("🚀 Confirmar e Inserir Dados no Banco", use_container_width=True):
+                conn = conectar()
+                cursor = conn.cursor()
+
+                sucessos = 0
+                erros_linha = 0
+
+                for _, linha in df_importado.iterrows():
+                    try:
+                        data_val = str(linha.get("data", linha.get("Data", date.today())))[:10]
+                        colab_val = str(linha.get("colaborador", linha.get("Colaborador", "Desconhecido")))
+                        
+                        erro_val = int(linha.get("sysvet_erro", linha.get("Erro", 0)) or 0)
+                        exito_val = int(linha.get("sysvet_exito", linha.get("Exito", 0)) or 0)
+                        faturado_val = int(linha.get("faturado", linha.get("Faturado", 0)) or 0)
+                        auditoria_val = int(linha.get("auditoria", linha.get("Auditoria", 0)) or 0)
+                        obs_val = str(linha.get("observacao", linha.get("Observacao", "")) or "")
+
+                        cursor.execute("""
+                            INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria, observacao)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (data_val, colab_val, erro_val, exito_val, faturado_val, auditoria_val, obs_val))
+                        sucessos += 1
+                    except Exception:
+                        erros_linha += 1
+
+                conn.commit()
+                conn.close()
+                st.success(f"✅ Importação concluída! {sucessos} registros inseridos com sucesso." + (f" ({erros_linha} linhas ignoradas por erro nos dados)" if erros_linha > 0 else ""))
+
+        except Exception as e:
+            st.error(f"❌ Erro ao processar o arquivo. Verifique se instalou as dependências. Detalhe técnico: {repr(e)}")
+
+
+# =========================================================
+# HISTÓRICO GERAL
+# =========================================================
+
+elif pagina == "📋 Histórico Geral":
+    st.title("📋 Histórico Geral de Lançamentos")
+    df_hist = buscar_produtividade()
+
+    if df_hist.empty:
+        st.info("Nenhum registro encontrado.")
+    else:
+        if st.session_state.perfil != "admin":
+            df_hist = df_hist[df_hist["colaborador"] == st.session_state.usuario_logado]
+
+        st.dataframe(df_hist, use_container_width=True, hide_index=True)
+
+
+# =========================================================
+# BACKUP & EXPORTAÇÃO
+# =========================================================
+
+elif pagina == "📥 Backup & Exportação" and st.session_state.perfil == "admin":
+    st.title("📥 Backup & Exportação")
+    st.caption("Faça o download de todos os dados do sistema em formato JSON para fins de segurança.")
+    
+    dados_json = gerar_backup_json()
+    
+    st.download_button(
+        label="📥 Baixar Backup Completo (JSON)",
+        data=dados_json,
+        file_name=f"backup_produtividade_{date.today()}.json",
+        mime="application/json",
+        use_container_width=True
+    )
