@@ -308,7 +308,7 @@ st.sidebar.markdown(f"""
 
 # Atalho de link externo integrado no menu lateral
 st.sidebar.markdown("### 🌐 Integração Externa")
-st.sidebar.link_button("🔗 Acessar Site / Sistema Externo", "https://central-de-saude.petlove.com.br/#/solicitacoes", use_container_width=True)
+st.sidebar.link_button("🔗 Acessar Site / Sistema Externo", "https://provet-korus.pixeonkorus.com/RotinaDiaria/Situacao.aspx?ad=provet", use_container_width=True)
 
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
