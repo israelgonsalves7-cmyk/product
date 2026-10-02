@@ -188,15 +188,13 @@ def gerar_backup_json():
     return json.dumps(dados_backup, ensure_ascii=False, indent=4)
 
 
-# INTEGRAÇÃO EXTERNA: Puxa especificamente a PRODUTIVIDADE do paciente na unidade e usuário informados
-def puxar_produtividade_paciente_externo(unidade, usuario_atendimento, paciente_busca, mes, ano):
+# INTEGRAÇÃO EXTERNA: Puxa a produtividade focada na Unidade e no Usuário de Atendimento
+def puxar_produtividade_usuario_externo(unidade, usuario_atendimento, mes, ano):
     try:
         uni_tratada = urllib.parse.quote(unidade)
         usu_tratado = urllib.parse.quote(usuario_atendimento)
-        pac_tratado = urllib.parse.quote(paciente_busca)
         
-        # Endpoint focado em retornar os dados de produtividade mapeados
-        url_api = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/api/produtividade_paciente?unidade={uni_tratada}&usuario={usu_tratado}&paciente={pac_tratado}&mes={mes}&ano={ano}"
+        url_api = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/api/produtividade_usuario?unidade={uni_tratada}&usuario={usu_tratado}&mes={mes}&ano={ano}"
         
         resposta = requests.get(url_api, timeout=5)
         if resposta.status_code == 200:
@@ -300,7 +298,7 @@ if not st.session_state.autenticado:
 
 
 # =========================================================
-# MENU LATERAL REFINADO (COM FILTROS DE UNIDADE, USUÁRIO E PACIENTE)
+# MENU LATERAL REFINADO (COM FILTROS DE UNIDADE E USUÁRIO)
 # =========================================================
 
 st.sidebar.markdown("## ⚡ PRODUCT")
@@ -311,7 +309,6 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Seção de Pesquisa e Puxada de Produtividade com PROVET-APOIO como padrão/opção principal
 st.sidebar.markdown("### 🌐 Puxar Produtividade")
 
 lista_unidades = ["PROVET-APOIO", "PROVET-MATRIZ", "PROVET-FILIAL"]
@@ -324,8 +321,6 @@ if lista_nomes_sidebar:
     usuario_atendimento = st.sidebar.selectbox("👨‍⚕️ Usuário de Atendimento", lista_nomes_sidebar)
 else:
     usuario_atendimento = st.sidebar.text_input("👨‍⚕️ Usuário de Atendimento", value="Atendente Padrão")
-
-paciente_pesquisa = st.sidebar.text_input("🐾 Nome do Paciente", placeholder="Digite o nome do paciente...")
 
 meses_dict = {
     "Janeiro": "01", "Fevereiro": "02", "Março": "03", "Abril": "04",
@@ -343,22 +338,20 @@ with col_m2:
 url_base_externa = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/Situacao.aspx?ad=provet&unidade={urllib.parse.quote(unidade_selecionada)}"
 if usuario_atendimento:
     url_base_externa += f"&usuario={urllib.parse.quote(usuario_atendimento)}"
-if paciente_pesquisa:
-    url_base_externa += f"&paciente={urllib.parse.quote(paciente_pesquisa)}"
 
 st.sidebar.link_button(f"🔗 Abrir Sistema ({unidade_selecionada})", url_base_externa, use_container_width=True)
 
-# Botão principal para puxar a produtividade do paciente com os filtros informados
-if st.sidebar.button("📥 Puxar Produtividade do Paciente", use_container_width=True):
-    if not paciente_pesquisa.strip():
-        st.sidebar.warning("⚠️ Informe o nome do paciente para puxar a produtividade.")
+# Botão principal para puxar a produtividade pelo usuário e unidade informados
+if st.sidebar.button("📥 Puxar Produtividade do Usuário", use_container_width=True):
+    if not usuario_atendimento.strip():
+        st.sidebar.warning("⚠️ Selecione ou informe o usuário de atendimento.")
     else:
-        with st.spinner(f"Buscando produtividade de '{paciente_pesquisa}' ({unidade_selecionada})..."):
-            dados_prod = puxar_produtividade_paciente_externo(unidade_selecionada, usuario_atendimento, paciente_pesquisa, mes_num, ano_escolhido)
+        with st.spinner(f"Buscando produtividade de '{usuario_atendimento}' ({unidade_selecionada})..."):
+            dados_prod = puxar_produtividade_usuario_externo(unidade_selecionada, usuario_atendimento, mes_num, ano_escolhido)
             if dados_prod:
-                st.sidebar.success(f"✅ Produtividade de '{paciente_pesquisa}' recuperada com sucesso!")
+                st.sidebar.success(f"✅ Produtividade de '{usuario_atendimento}' recuperada com sucesso!")
             else:
-                st.sidebar.warning("⚠️ Nenhum registro de produtividade encontrado para os parâmetros informados.")
+                st.sidebar.warning("⚠️️ Nenhum registro de produtividade encontrado para este usuário.")
 
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
@@ -629,7 +622,7 @@ elif pagina == "👥 Gerenciar Colaboradores" and st.session_state.perfil == "ad
                     st.success(f"✅ {nome} cadastrado com sucesso!")
                     st.rerun()
                 except sqlite3.IntegrityError:
-                    st.error("⚠️️ Este colaborador já se encontra cadastrado no sistema.")
+                    st.error("⚠ Este colaborador já se encontra cadastrado no sistema.")
 
     colaboradores = buscar_colaboradores()
     if not colaboradores.empty:
