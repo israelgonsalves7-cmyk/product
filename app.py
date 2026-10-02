@@ -8,8 +8,6 @@ import json
 import requests
 import urllib.parse
 import time
-import os
-import glob
 
 # Importações do Selenium para automação complementar, se necessário
 from selenium import webdriver
@@ -107,7 +105,7 @@ criar_banco()
 
 
 # =========================================================
-# FUNÇÕES DE APOIO E CAPTURA AUTOMÁTICA
+# FUNÇÕES DE APOIO
 # =========================================================
 
 def buscar_senha():
@@ -140,57 +138,6 @@ def buscar_acessos():
     df = pd.read_sql_query("SELECT * FROM acessos_colaboradores ORDER BY nome", conn)
     conn.close()
     return df
-
-
-def processar_e_salvar_dataframe(df_up):
-    conn = conectar()
-    cursor = conn.cursor()
-    cadastrados = 0
-    
-    for _, linha in df_up.iterrows():
-        try:
-            data_v = str(linha.get("data", linha.get("Data", date.today())))[:10]
-            colab_v = str(linha.get("colaborador", linha.get("Colaborador", linha.get("usuario", "Atendente"))))
-            err_v = int(linha.get("sysvet_erro", linha.get("Erro", 0)) or 0)
-            exi_v = int(linha.get("sysvet_exito", linha.get("Exito", 0)) or 0)
-            fat_v = int(linha.get("faturado", linha.get("Faturado", 0)) or 0)
-            aud_v = int(linha.get("auditoria", linha.get("Auditoria", 0)) or 0)
-            obs_v = str(linha.get("observacao", linha.get("Observacao", "")) or "")
-            
-            cursor.execute("""
-                INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria, observacao)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (data_v, colab_v, err_v, exi_v, fat_v, aud_v, obs_v))
-            cadastrados += 1
-        except Exception:
-            pass
-            
-    conn.commit()
-    conn.close()
-    return cadastrados
-
-
-def verificar_baixados_automaticamente():
-    downloads_path = os.path.join(os.path.expanduser("~"), "Downloads")
-    extensoes = ("*.xlsx", "*.xls", "*.csv")
-    arquivos = []
-    
-    for ext in extensoes:
-        arquivos.extend(glob.glob(os.path.join(downloads_path, ext)))
-        
-    if not arquivos:
-        return None
-        
-    arquivo_recente = max(arquivos, key=os.path.getmtime)
-    tempo_modificacao = os.path.getmtime(arquivo_recente)
-    
-    # Se o arquivo foi baixado nos últimos 30 segundos e ainda não foi processado nesta sessão
-    if (time.time() - tempo_modificacao) < 30:
-        if st.session_state.get("ultimo_arquivo_processado") != arquivo_recente:
-            st.session_state["ultimo_arquivo_processado"] = arquivo_recente
-            return arquivo_recente
-            
-    return None
 
 
 def buscar_produtividade():
@@ -335,25 +282,7 @@ if not st.session_state.autenticado:
 
 
 # =========================================================
-# VERIFICAÇÃO AUTOMÁTICA EM SEGUNDO PLANO
-# =========================================================
-
-arquivo_detectado = verificar_baixados_automaticamente()
-if arquivo_detectado:
-    try:
-        if arquivo_detectado.endswith(".csv"):
-            df_auto = pd.read_csv(arquivo_detectado)
-        else:
-            df_auto = pd.read_excel(arquivo_detectado)
-        
-        qtd_importada = processar_e_salvar_dataframe(df_auto)
-        st.toast(f"⚡ Planilha do Korus detectada e importada automaticamente! ({qtd_importada} registros salvos)", icon="🚀")
-    except Exception:
-        pass
-
-
-# =========================================================
-# MENU LATERAL REFINADO
+# MENU LATERAL REFINADO (COM UPLOAD RÁPIDO DE PLANILHA)
 # =========================================================
 
 st.sidebar.markdown("## ⚡ PRODUCT")
@@ -364,14 +293,57 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.sidebar.markdown("### 🤖 Sincronização Automática")
-st.sidebar.info("💡 **Modo Automático Ativo:** Gere e baixe a planilha direto no Korus. O sistema a capturará e processará sozinha em segundos.")
+st.sidebar.markdown("### 📥 Importação Rápida de Planilha")
+st.sidebar.caption("Gere a planilha no sistema Korus e envie aqui para processar os dados instantaneamente.")
+
+arquivo_sidebar = st.sidebar.file_uploader("Arquivo Korus (.xlsx, .csv)", type=["xlsx", "xls", "csv"], key="upload_lateral")
+
+if arquivo_sidebar is not None:
+    try:
+        nome_arq = arquivo_sidebar.name.lower()
+        if nome_arq.endswith(".csv"):
+            df_up = pd.read_csv(arquivo_sidebar)
+        else:
+            df_up = pd.read_excel(arquivo_sidebar)
+        
+        if st.sidebar.button("🚀 Processar e Salvar Dados", use_container_width=True):
+            conn = conectar()
+            cursor = conn.cursor()
+            cadastrados = 0
+            
+            for _, linha in df_up.iterrows():
+                try:
+                    data_v = str(linha.get("data", linha.get("Data", date.today())))[:10]
+                    colab_v = str(linha.get("colaborador", linha.get("Colaborador", linha.get("usuario", "Atendente"))))
+                    err_v = int(linha.get("sysvet_erro", linha.get("Erro", 0)) or 0)
+                    exi_v = int(linha.get("sysvet_exito", linha.get("Exito", 0)) or 0)
+                    fat_v = int(linha.get("faturado", linha.get("Faturado", 0)) or 0)
+                    aud_v = int(linha.get("auditoria", linha.get("Auditoria", 0)) or 0)
+                    obs_v = str(linha.get("observacao", linha.get("Observacao", "")) or "")
+                    
+                    cursor.execute("""
+                        INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria, observacao)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (data_v, colab_v, err_v, exi_v, fat_v, aud_v, obs_v))
+                    cadastrados += 1
+                except Exception:
+                    pass
+            
+            conn.commit()
+            conn.close()
+            st.sidebar.success(f"✅ {cadastrados} registros importados com sucesso!")
+            time.sleep(1)
+            st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"Erro ao ler arquivo: {e}")
+
+st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
 lista_unidades = ["PROVET-APOIO", "PROVET-MATRIZ", "PROVET-FILIAL"]
 unidade_selecionada = st.sidebar.selectbox("🏥 Unidade de Atendimento", lista_unidades, index=0)
 
 url_sistema_externo = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/Situacao.aspx?ad=provet&unidade={urllib.parse.quote(unidade_selecionada)}"
-st.sidebar.link_button(f"🔗 Abrir Korus ({unidade_selecionada})", url_sistema_externo, use_container_width=True)
+st.sidebar.link_button(f"🔗 Abrir Sistema ({unidade_selecionada})", url_sistema_externo, use_container_width=True)
 
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
@@ -426,7 +398,7 @@ if pagina == "📊 Dashboard Executivo" and st.session_state.perfil == "admin":
 
     df = buscar_produtividade()
     if df.empty:
-        st.info("Ainda não existem registros de produtividade. Acesse o Korus, gere e baixe a planilha para renderizar o painel.")
+        st.info("Ainda não existem registros de produtividade para renderizar o painel.")
         st.stop()
 
     st.markdown("### 🎛️ Filtros Globais")
@@ -714,11 +686,11 @@ elif pagina == "🗑️ Excluir Histórico" and st.session_state.perfil == "admi
 
 
 # =========================================================
-# IMPORTAR DADOS (EXCEL / CSV MANUAL)
+# IMPORTAR DADOS (EXCEL / CSV)
 # =========================================================
 
 elif pagina == "📥 Importar Dados" and st.session_state.perfil == "admin":
-    st.title("📥 Importação Manual de Planilhas (Excel / CSV)")
+    st.title("📥 Importação de Planilhas (Excel / CSV)")
     arquivo_upload = st.file_uploader("Selecione o arquivo principal", type=["xlsx", "xls", "csv"])
 
     if arquivo_upload is not None:
@@ -726,8 +698,27 @@ elif pagina == "📥 Importar Dados" and st.session_state.perfil == "admin":
         st.dataframe(df_importado.head(), use_container_width=True)
 
         if st.button("🚀 Confirmar e Inserir Dados no Banco", use_container_width=True):
-            qtd = processar_e_salvar_dataframe(df_importado)
-            st.success(f"✅ {qtd} registros importados com sucesso!")
+            conn = conectar()
+            cursor = conn.cursor()
+            for _, linha in df_importado.iterrows():
+                try:
+                    cursor.execute("""
+                        INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria, observacao)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        str(linha.get("data", date.today()))[:10],
+                        str(linha.get("colaborador", "Desconhecido")),
+                        int(linha.get("sysvet_erro", 0) or 0),
+                        int(linha.get("sysvet_exito", 0) or 0),
+                        int(linha.get("faturado", 0) or 0),
+                        int(linha.get("auditoria", 0) or 0),
+                        str(linha.get("observacao", "") or "")
+                    ))
+                except Exception:
+                    pass
+            conn.commit()
+            conn.close()
+            st.success("✅ Importação concluída com sucesso!")
 
 
 # =========================================================
