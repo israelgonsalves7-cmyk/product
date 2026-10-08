@@ -13,7 +13,7 @@ import urllib.parse
 # =========================================================
 
 st.set_page_config(
-    page_title="Grupo Fleury | Workspace Médico e Operacional",
+    page_title="Product | Workspace Médico e Operacional",
     page_icon="🧬",
     layout="wide",
     initial_sidebar_state="expanded"
