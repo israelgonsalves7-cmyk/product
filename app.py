@@ -70,11 +70,10 @@ def criar_banco():
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO configuracoes (id, senha) VALUES (1, ?)", ("2010",))
 
-    # Inserir um colaborador padrão de forma segura usando OR IGNORE
-    cursor.execute("""
-        INSERT OR IGNORE INTO colaboradores (nome, senha) 
-        VALUES (?, ?)
-    """, ("Colaborador Padrão", "1234"))
+    # Inserir um colaborador padrão caso a tabela esteja vazia
+    cursor.execute("SELECT COUNT(*) FROM colaboradores")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO colaboradores (nome, senha) VALUES (?, ?)", ("Colaborador Padrão", "1234"))
 
     conn.commit()
     conn.close()
