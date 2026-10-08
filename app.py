@@ -27,7 +27,7 @@ DB = "produtividade.db"
 # =========================================================
 
 def conectar():
-    return sqlite3.connect(DB)
+    return sqlite3.connect(DB, check_same_thread=False)
 
 
 def criar_banco():
@@ -69,15 +69,14 @@ def criar_banco():
         )
     """)
 
-    try:
-        cursor.execute("ALTER TABLE produtividade ADD COLUMN auditoria INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
+    # Migrações automáticas estruturadas
+    cursor.execute("PRAGMA table_info(produtividade)")
+    colunas_prod = [col[1] for col in cursor.fetchall()]
 
-    try:
+    if "auditoria" not in colunas_prod:
+        cursor.execute("ALTER TABLE produtividade ADD COLUMN auditoria INTEGER DEFAULT 0")
+    if "observacao" not in colunas_prod:
         cursor.execute("ALTER TABLE produtividade ADD COLUMN observacao TEXT")
-    except sqlite3.OperationalError:
-        pass
 
     cursor.execute("SELECT COUNT(*) FROM configuracoes")
     quantidade = cursor.fetchone()[0]
@@ -96,7 +95,7 @@ criar_banco()
 
 
 # =========================================================
-# FUNÇÕES DE APOIO E DADOS (E INTEGRAÇÃO EXTERNA INTELIGENTE)
+# FUNÇÕES DE APOIO E DADOS (COM CACHE AUTOMATIZADO)
 # =========================================================
 
 def buscar_senha():
@@ -105,9 +104,7 @@ def buscar_senha():
     cursor.execute("SELECT senha FROM configuracoes WHERE id = 1")
     resultado = cursor.fetchone()
     conn.close()
-    if resultado:
-        return resultado[0]
-    return "2010"
+    return resultado[0] if resultado else "2010"
 
 
 def alterar_senha(nova_senha):
@@ -141,16 +138,8 @@ def buscar_produtividade():
         df["sysvet_erro"] = pd.to_numeric(df["sysvet_erro"], errors="coerce").fillna(0).astype(int)
         df["sysvet_exito"] = pd.to_numeric(df["sysvet_exito"], errors="coerce").fillna(0).astype(int)
         df["faturado"] = pd.to_numeric(df["faturado"], errors="coerce").fillna(0).astype(int)
-
-        if "auditoria" not in df.columns:
-            df["auditoria"] = 0
-        else:
-            df["auditoria"] = pd.to_numeric(df["auditoria"], errors="coerce").fillna(0).astype(int)
-
-        if "observacao" not in df.columns:
-            df["observacao"] = ""
-        else:
-            df["observacao"] = df["observacao"].fillna("")
+        df["auditoria"] = pd.to_numeric(df["auditoria"], errors="coerce").fillna(0).astype(int)
+        df["observacao"] = df["observacao"].fillna("")
 
         df["total_sysvet"] = df["sysvet_erro"] + df["sysvet_exito"]
         df["produtividade_total"] = df["sysvet_erro"] + df["sysvet_exito"] + df["faturado"] + df["auditoria"]
@@ -167,16 +156,16 @@ def gerar_backup_json():
     cursor = conn.cursor()
 
     cursor.execute("SELECT * FROM colaboradores")
-    cols = [desc[0] for desc in cursor.description]
-    colaboradores = [dict(zip(cols, row)) for row in cursor.fetchall()]
+    cols_c = [desc[0] for desc in cursor.description]
+    colaboradores = [dict(zip(cols_c, row)) for row in cursor.fetchall()]
 
     cursor.execute("SELECT * FROM produtividade")
-    cols = [desc[0] for desc in cursor.description]
-    produtividade = [dict(zip(cols, row)) for row in cursor.fetchall()]
+    cols_p = [desc[0] for desc in cursor.description]
+    produtividade = [dict(zip(cols_p, row)) for row in cursor.fetchall()]
 
     cursor.execute("SELECT * FROM acessos_colaboradores")
-    cols = [desc[0] for desc in cursor.description]
-    acessos = [dict(zip(cols, row)) for row in cursor.fetchall()]
+    cols_a = [desc[0] for desc in cursor.description]
+    acessos = [dict(zip(cols_a, row)) for row in cursor.fetchall()]
 
     conn.close()
 
@@ -188,14 +177,12 @@ def gerar_backup_json():
     return json.dumps(dados_backup, ensure_ascii=False, indent=4)
 
 
-# INTEGRAÇÃO EXTERNA: Puxa dados considerando a Unidade PROVET-APOIO, o usuário e o paciente
 def puxar_dados_paciente_externo(unidade, usuario_atendimento, paciente_busca, mes, ano):
     try:
         uni_tratada = urllib.parse.quote(unidade)
         usu_tratado = urllib.parse.quote(usuario_atendimento)
         pac_tratado = urllib.parse.quote(paciente_busca)
         
-        # Endpoint integrando os novos parâmetros de Unidade, Usuário e Paciente
         url_api = f"https://provet-korus.pixeonkorus.com/RotinaDiaria/api/paciente?unidade={uni_tratada}&usuario={usu_tratado}&paciente={pac_tratado}&mes={mes}&ano={ano}"
         
         resposta = requests.get(url_api, timeout=5)
@@ -222,22 +209,17 @@ def enviar_dados_para_externo(dados_payload):
 if "modo_noturno" not in st.session_state:
     st.session_state.modo_noturno = True
 
-if not st.session_state.modo_noturno:
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
-    html, body, [class*="css"] { font-family: 'Plus Jakarta Sans', sans-serif; }
-    .stApp { background-color: #f8fafc; color: #0f172a; }
-    </style>
-    """, unsafe_allow_html=True)
-else:
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
-    html, body, [class*="css"] { font-family: 'Plus Jakarta Sans', sans-serif; }
-    .stApp { background-color: #030712; color: #f8fafc; }
-    </style>
-    """, unsafe_allow_html=True)
+modo_tema = "dark" if st.session_state.modo_noturno else "light"
+bg_app = "#030712" if modo_tema == "dark" else "#f8fafc"
+txt_app = "#f8fafc" if modo_tema == "dark" else "#0f172a"
+
+st.markdown(f"""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+html, body, [class*="css"] {{ font-family: 'Plus Jakarta Sans', sans-serif; }}
+.stApp {{ background-color: {bg_app}; color: {txt_app}; }}
+</style>
+""", unsafe_allow_html=True)
 
 
 # =========================================================
@@ -300,7 +282,7 @@ if not st.session_state.autenticado:
 
 
 # =========================================================
-# MENU LATERAL REFINADO (COM FILTROS DE UNIDADE, USUÁRIO E PACIENTE)
+# MENU LATERAL REFINADO
 # =========================================================
 
 st.sidebar.markdown("## ⚡ PRODUCT")
@@ -311,14 +293,10 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Seção de Pesquisa Avançada com Unidade PROVET-APOIO, Usuário e Paciente
 st.sidebar.markdown("### 🌐 Consulta Externa / Pacientes")
-
-# Filtro de Unidade fixando/destacando a PROVET-APOIO
 lista_unidades = ["PROVET-APOIO", "PROVET-MATRIZ", "PROVET-FILIAL"]
 unidade_selecionada = st.sidebar.selectbox("🏥 Unidade", lista_unidades)
 
-# Filtro de Usuário de Atendimento
 df_cols_sidebar = buscar_colaboradores()
 lista_nomes_sidebar = df_cols_sidebar["nome"].tolist() if not df_cols_sidebar.empty else []
 
@@ -327,7 +305,6 @@ if lista_nomes_sidebar:
 else:
     usuario_atendimento = st.sidebar.text_input("👨‍⚕️ Usuário de Atendimento", value="Atendente Padrão")
 
-# Campo para pesquisar o nome do paciente
 paciente_pesquisa = st.sidebar.text_input("🐾 Pesquisar Nome do Paciente", placeholder="Ex: Mel, Thor...")
 
 meses_dict = {
@@ -351,7 +328,6 @@ if paciente_pesquisa:
 
 st.sidebar.link_button(f"🔗 Abrir Sistema ({unidade_selecionada})", url_base_externa, use_container_width=True)
 
-# Botão para puxar as informações do paciente diretamente da API usando os filtros definidos
 if st.sidebar.button("📥 Puxar Dados do Paciente", use_container_width=True):
     if not paciente_pesquisa.strip():
         st.sidebar.warning("⚠️ Informe o nome do paciente para realizar a busca.")
@@ -364,11 +340,7 @@ if st.sidebar.button("📥 Puxar Dados do Paciente", use_container_width=True):
                 st.sidebar.warning("⚠️ Nenhum registro encontrado para este paciente na unidade selecionada.")
 
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
-
-if st.session_state.modo_noturno:
-    texto_modo = "☀️ Alternar Modo Claro"
-else:
-    texto_modo = "🌙 Alternar Modo Noturno"
+texto_modo = "☀️ Alternar Modo Claro" if st.session_state.modo_noturno else "🌙 Alternar Modo Noturno"
 
 if st.sidebar.button(texto_modo, use_container_width=True):
     st.session_state.modo_noturno = not st.session_state.modo_noturno
@@ -407,7 +379,7 @@ if st.sidebar.button("🚪 ENCERRAR SESSÃO", use_container_width=True):
 
 
 # =========================================================
-# DASHBOARD EXECUTIVO (ESTILO POWER BI)
+# DASHBOARD EXECUTIVO
 # =========================================================
 
 if pagina == "📊 Dashboard Executivo" and st.session_state.perfil == "admin":
@@ -660,16 +632,14 @@ elif pagina == "🗑️ Excluir Colaborador" and st.session_state.perfil == "adm
             colab_para_excluir = st.selectbox("Selecione o colaborador a ser excluído", colaboradores["nome"].tolist())
             
             confirmar_exclusao = st.checkbox("Estou ciente de que a remoção excluirá o cadastro do colaborador")
-            deletar_colab = st.form_submit_button("🗑️️ EXCLUIR COLABORADOR SELECIONADO", use_container_width=True)
+            deletar_colab = st.form_submit_button("🗑 EXCLUIR COLABORADOR SELECIONADO", use_container_width=True)
 
             if deletar_colab:
                 if confirmar_exclusao:
                     conn = conectar()
                     cursor = conn.cursor()
-                    
                     cursor.execute("DELETE FROM colaboradores WHERE nome = ?", (colab_para_excluir,))
                     cursor.execute("DELETE FROM acessos_colaboradores WHERE nome = ?", (colab_para_excluir,))
-                    
                     conn.commit()
                     conn.close()
                     
@@ -737,7 +707,6 @@ elif pagina == "🗑️ Excluir Histórico" and st.session_state.perfil == "admi
         st.info("Nenhum registro de produtividade cadastrado para excluir.")
     else:
         st.dataframe(df_hist, use_container_width=True, hide_index=True)
-        
         st.markdown("---")
         
         col_del1, col_del2 = st.columns(2)
@@ -779,7 +748,7 @@ elif pagina == "🗑️ Excluir Histórico" and st.session_state.perfil == "admi
 
 
 # =========================================================
-# IMPORTAR DADOS (EXCEL / CSV)
+# IMPORTAR DADOS (EXCEL / CSV AUTOMATIZADO)
 # =========================================================
 
 elif pagina == "📥 Importar Dados" and st.session_state.perfil == "admin":
@@ -799,43 +768,38 @@ elif pagina == "📥 Importar Dados" and st.session_state.perfil == "admin":
             elif nome_arquivo.endswith(".xls"):
                 df_importado = pd.read_excel(arquivo_upload, engine="xlrd")
             else:
-                st.error("❌ Formato de arquivo não suportado. Envie um arquivo .csv, .xls ou .xlsx.")
+                st.error("❌ Formato de arquivo não suportado.")
                 st.stop()
 
-            st.success("✅ Arquivo lido com sucesso! Pré-visualização dos dados:")
+            st.success("✅ Arquivo lido com sucesso! Pré-visualização abaixo:")
             st.dataframe(df_importado.head(), use_container_width=True)
 
-            if st.button("🚀 Confirmar e Inserir Dados no Banco", use_container_width=True):
+            if st.button("🚀 Confirmar e Importar para o Banco", use_container_width=True):
                 conn = conectar()
-                cursor = conn.cursor()
+                importados = 0
+                for _, row in df_importado.iterrows():
+                    data = str(row.get("data", date.today()))
+                    colaborador = str(row.get("colaborador", "Desconhecido"))
+                    sysvet_erro = int(row.get("sysvet_erro", 0))
+                    sysvet_exito = int(row.get("sysvet_exito", 0))
+                    faturado = int(row.get("faturado", 0))
+                    auditoria = int(row.get("auditoria", 0))
+                    observacao = str(row.get("observacao", ""))
 
-                sucessos = 0
-                erros_linha = 0
-
-                for _, linha in df_importado.iterrows():
-                    try:
-                        data_val = str(linha.get("data", linha.get("Data", date.today())))[:10]
-                        colab_val = str(linha.get("colaborador", linha.get("Colaborador", "Desconhecido")))
-                        
-                        erro_val = int(linha.get("sysvet_erro", linha.get("Erro", 0)) or 0)
-                        exito_val = int(linha.get("sysvet_exito", linha.get("Exito", 0)) or 0)
-                        faturado_val = int(linha.get("faturado", linha.get("Faturado", 0)) or 0)
-                        auditoria_val = int(linha.get("auditoria", linha.get("Auditoria", 0)) or 0)
-                        obs_val = str(linha.get("observacao", linha.get("Observacao", "")) or "")
-
-                        cursor.execute("""
-                            INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria, observacao)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (data_val, colab_val, erro_val, exito_val, faturado_val, auditoria_val, obs_val))
-                        sucessos += 1
-                    except Exception:
-                        erros_linha += 1
-
+                    conn.execute(
+                        """
+                        INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria, observacao)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria, observacao)
+                    )
+                    importados += 1
+                
                 conn.commit()
                 conn.close()
-                st.success(f"✅ Importação concluída! {sucessos} registros inseridos com sucesso.")
+                st.success(f"✅ {importados} registros importados com sucesso para o banco de dados!")
         except Exception as e:
-            st.error(f"❌ Erro ao processar arquivo: {e}")
+            st.error(f"❌ Erro ao processar o arquivo: {e}")
 
 
 # =========================================================
@@ -844,28 +808,28 @@ elif pagina == "📥 Importar Dados" and st.session_state.perfil == "admin":
 
 elif pagina == "📥 Backup & Exportação" and st.session_state.perfil == "admin":
     st.title("📥 Backup & Exportação de Dados")
-    st.caption("Faça o download do backup completo do sistema em formato JSON ou exporte relatórios consolidados em Excel.")
+    st.caption("Baixe uma cópia de segurança em formato JSON ou exporte a tabela de produtividade para Excel/CSV.")
 
-    dados_json = gerar_backup_json()
-
+    json_str = gerar_backup_json()
     st.download_button(
         label="📥 Baixar Backup Completo (JSON)",
-        data=dados_json,
+        data=json_str,
         file_name=f"backup_produtividade_{date.today()}.json",
         mime="application/json",
         use_container_width=True
     )
 
+    st.markdown("---")
     df_export = buscar_produtividade()
     if not df_export.empty:
         buffer = BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df_export.to_excel(writer, index=False, sheet_name="Produtividade")
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            df_export.to_excel(writer, index=False, sheet_name='Produtividade')
         
         st.download_button(
-            label="📊 Baixar Relatório Completo em Excel (.xlsx)",
+            label="📊 Baixar Histórico em Excel (.xlsx)",
             data=buffer.getvalue(),
-            file_name=f"relatorio_produtividade_{date.today()}.xlsx",
+            file_name=f"historico_produtividade_{date.today()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
@@ -879,16 +843,16 @@ elif pagina == "🔐 Segurança / Senha" and st.session_state.perfil == "admin":
     st.title("🔐 Configurações de Segurança")
     
     with st.form("form_senha"):
-        st.subheader("Alterar Senha Master do Administrador")
+        st.subheader("🔑 Alterar Senha Master do Administrador")
         senha_atual = st.text_input("Senha Master Atual", type="password")
         nova_senha = st.text_input("Nova Senha Master", type="password")
-        confirma_senha = st.text_input("Confirme a Nova Senha", type="password")
+        confirma_senha = st.text_input("Confirme a Nova Senha Master", type="password")
         
-        atualizar_senha = st.form_submit_button("💾 ATUALIZAR SENHA MASTER", use_container_width=True)
-        
-        if atualizar_senha:
+        atualizar = st.form_submit_button("ALTERAR SENHA MASTER", use_container_width=True)
+
+        if atualizar:
             if senha_atual != buscar_senha():
-                st.error("❌ A senha master atual informada está incorreta.")
+                st.error("❌ A senha master atual está incorreta.")
             elif not nova_senha.strip():
                 st.error("❌ A nova senha não pode estar em branco.")
             elif nova_senha != confirma_senha:
