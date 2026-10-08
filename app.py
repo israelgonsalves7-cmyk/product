@@ -290,7 +290,7 @@ if not st.session_state.autenticado:
     col1, col2, col3 = st.columns([1, 1.3, 1])
 
     with col2:
-        st.markdown("<h1 style='text-align: center; color: #006699; font-size: 2.2rem;'>🧬 GRUPO FLEURY</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #006699; font-size: 2.2rem;'>🧬 PRODUCT </h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: center; font-size: 1rem; color: #555555;'>Sistema Integrado de Gestão Diagnóstica e Produtividade</p>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
