@@ -13,7 +13,7 @@ import urllib.parse
 # =========================================================
 
 st.set_page_config(
-    page_title="Product | Workspace Médico e Operacional",
+    page_title="Grupo Fleury | Workspace Médico e Operacional",
     page_icon="🧬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -218,7 +218,7 @@ def enviar_dados_para_externo(dados_payload):
 # =========================================================
 
 if "modo_noturno" not in st.session_state:
-    st.session_state.modo_noturno = False  # Padrão limpo/claro hospitalar
+    st.session_state.modo_noturno = False
 
 if not st.session_state.modo_noturno:
     st.markdown("""
@@ -232,7 +232,6 @@ if not st.session_state.modo_noturno:
         background-color: #F4F7F9; 
         color: #002B49; 
     }
-    /* Estilização personalizada de Inputs e Botões inspirada no Fleury */
     div.stButton > button {
         background-color: #006699;
         color: white;
@@ -246,7 +245,6 @@ if not st.session_state.modo_noturno:
         background-color: #004D73;
         color: #ffffff;
     }
-    /* Sidebar com tom Azul Petróleo Corporativo */
     [data-testid="stSidebar"] {
         background-color: #002B49;
         color: #FFFFFF;
@@ -290,7 +288,7 @@ if not st.session_state.autenticado:
     col1, col2, col3 = st.columns([1, 1.3, 1])
 
     with col2:
-        st.markdown("<h1 style='text-align: center; color: #006699; font-size: 2.2rem;'>🧬 PRODUCT </h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #006699; font-size: 2.2rem;'>🧬 GRUPO FLEURY</h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: center; font-size: 1rem; color: #555555;'>Sistema Integrado de Gestão Diagnóstica e Produtividade</p>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -485,12 +483,12 @@ if pagina == "📊 Dashboard Executivo" and st.session_state.perfil == "admin":
 
     st.markdown("---")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("❌ Erro Sistema", f"{erro:,}")
-    c2.metric("✅ Êxito Sistema", f"{exito:,}")
-    c3.metric("📁 Faturado", f"{faturado:,}")
-    c4.metric("🔍 Auditoria", f"{auditoria:,}")
+    c1.metric("❌ sysvet_erro", f"{erro:,}")
+    c2.metric("✅ sysvet_exito", f"{exito:,}")
+    c3.metric("📁 faturado", f"{faturado:,}")
+    c4.metric("🔍 auditoria", f"{auditoria:,}")
     c5.metric("📊 Volume Total", f"{produtividade:,}")
-    c6.metric("🎯 Taxa de Êxito", f"{taxa_media:.1f}%")
+    c6.metric("🎯 Taxa Êxito", f"{taxa_media:.1f}%")
     st.markdown("---")
 
     col_g1, col_g2 = st.columns(2)
@@ -521,12 +519,12 @@ if pagina == "📊 Dashboard Executivo" and st.session_state.perfil == "admin":
 
 
 # =========================================================
-# LANÇAR PRODUTIVIDADE
+# LANÇAR PRODUTIVIDADE (COM TODOS OS CAMPOS DO FLEURY & NOMENCLATURAS MANTIDAS)
 # =========================================================
 
 elif pagina == "📝 Lançar Produtividade":
-    st.title("📝 Lançamento de Produtividade Diária")
-    st.caption("Insira os indicadores quantitativos correspondentes às suas entregas")
+    st.title("📝 Lançamento de Produtividade Diária — Grupo Fleury")
+    st.caption("Registro completo de atendimento, exames, logística laboratorial e indicadores operacionais")
 
     colaboradores = buscar_colaboradores()
 
@@ -534,30 +532,52 @@ elif pagina == "📝 Lançar Produtividade":
         st.warning("⚠️ Cadastre colaboradores antes de realizar lançamentos.")
     else:
         with st.form("form_produtividade"):
-            data_lancamento = st.date_input("📅 Data de Referência", value=date.today())
+            st.markdown("### 📋 Informações do Atendimento e Amostra")
+            col_b1, col_b2, col_b3 = st.columns(3)
+            with col_b1:
+                data_lancamento = st.date_input("📅 Data de Referência", value=date.today())
+            with col_b2:
+                if st.session_state.perfil == "admin":
+                    colaborador = st.selectbox("👤 Colaborador Responsável", colaboradores["nome"].tolist())
+                else:
+                    colaborador = st.session_state.usuario_logado
+                    st.info(f"👤 Registrando atividade em nome de: **{colaborador}**")
+            with col_b3:
+                unidade_atendimento = st.selectbox("🏥 Unidade / Posto Fleury", ["Central de Triagem - SP", "Laboratório Sede Morumbi", "Unidade Paulista", "Unidade Itaim", "Apoio Diagnóstico"])
 
-            if st.session_state.perfil == "admin":
-                colaborador = st.selectbox("👤 Colaborador Responsável", colaboradores["nome"].tolist())
-            else:
-                colaborador = st.session_state.usuario_logado
-                st.info(f"👤 Registrando atividade em nome de: **{colaborador}**")
-
+            st.markdown("---")
+            st.markdown("### 🔬 Indicadores de Processamento e Exames (Nomenclaturas Nativas)")
+            
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                erro = st.number_input("❌ Erro de Sistema", min_value=0, value=0, step=1)
+                sysvet_erro = st.number_input("❌ sysvet_erro", min_value=0, value=0, step=1)
             with col2:
-                exito = st.number_input("✅ Êxito de Sistema", min_value=0, value=0, step=1)
+                sysvet_exito = st.number_input("✅ sysvet_exito", min_value=0, value=0, step=1)
             with col3:
-                faturado = st.number_input("📁 Faturado", min_value=0, value=0, step=1)
+                faturado = st.number_input("📁 faturado", min_value=0, value=0, step=1)
             with col4:
-                auditoria = st.number_input("🔍 Auditoria", min_value=0, value=0, step=1)
+                auditoria = st.number_input("🔍 auditoria", min_value=0, value=0, step=1)
 
-            observacao = st.text_area("💬 Observações / Informações Complementares", placeholder="Detalhes de ocorrências, laudos ou observações relevantes...")
+            st.markdown("---")
+            st.markdown("### 🧬 Campos Adicionais de Biometria, Logística e Qualidade Fleury")
+            
+            col_f1, col_f2, col_f3 = st.columns(3)
+            with col_f1:
+                amostras_recebidas = st.number_input("🧪 Amostras Recebidas", min_value=0, value=0, step=1)
+                laudos_liberados = st.number_input("📋 Laudos Liberados", min_value=0, value=0, step=1)
+            with col_f2:
+                amostras_rejeitadas = st.number_input("⚠️ Amostras Rejeitadas / Hemólise", min_value=0, value=0, step=1)
+                reanalises_solicitadas = st.number_input("🔄 Reanálises Solicitadas", min_value=0, value=0, step=1)
+            with col_f3:
+                tempo_medio_processamento = st.number_input("⏱️ Tempo Médio Processamento (min)", min_value=0.0, value=0.0, step=5.0)
+                sla_atendimento_pct = st.slider("🎯 SLA de Atendimento (%)", min_value=0.0, max_value=100.0, value=98.5, step=0.5)
 
-            total = erro + exito + faturado + auditoria
-            st.markdown(f"### 📊 Total computado do lançamento: `{total}`")
+            observacao = st.text_area("💬 observacao / Detalhes da Produtividade", placeholder="Descreva ocorrências críticas, desvios de temperatura de amostra, falhas de equipamento ou laudos pendentes...")
 
-            salvar = st.form_submit_button("💾 SALVAR REGISTRO OFICIAL", use_container_width=True)
+            total = sysvet_erro + sysvet_exito + faturado + auditoria
+            st.markdown(f"### 📊 Total computado do lançamento (`sysvet_erro + sysvet_exito + faturado + auditoria`): `{total}`")
+
+            salvar = st.form_submit_button("💾 SALVAR REGISTRO OFICIAL NO SISTEMA", use_container_width=True)
 
             if salvar:
                 conn = conectar()
@@ -566,7 +586,7 @@ elif pagina == "📝 Lançar Produtividade":
                     INSERT INTO produtividade (data, colaborador, sysvet_erro, sysvet_exito, faturado, auditoria, observacao)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (str(data_lancamento), colaborador, int(erro), int(exito), int(faturado), int(auditoria), observacao.strip())
+                    (str(data_lancamento), colaborador, int(sysvet_erro), int(sysvet_exito), int(faturado), int(auditoria), observacao.strip())
                 )
                 conn.commit()
                 conn.close()
@@ -574,16 +594,22 @@ elif pagina == "📝 Lançar Produtividade":
                 payload_externo = {
                     "data": str(data_lancamento),
                     "colaborador": colaborador,
-                    "sysvet_erro": int(erro),
-                    "sysvet_exito": int(exito),
+                    "sysvet_erro": int(sysvet_erro),
+                    "sysvet_exito": int(sysvet_exito),
                     "faturado": int(faturado),
                     "auditoria": int(auditoria),
+                    "amostras_recebidas": int(amostras_recebidas),
+                    "laudos_liberados": int(laudos_liberados),
+                    "amostras_rejeitadas": int(amostras_rejeitadas),
+                    "reanalises_solicitadas": int(reanalises_solicitadas),
+                    "tempo_medio_processamento": float(tempo_medio_processamento),
+                    "sla_atendimento_pct": float(sla_atendimento_pct),
                     "total": total,
                     "observacao": observacao.strip()
                 }
                 
                 enviar_dados_para_externo(payload_externo)
-                st.success("✅ Atividade registrada e salva no banco de dados com sucesso!")
+                st.success("✅ Atividade e métricas hospitalares/diagnósticas registradas com sucesso!")
                 st.rerun()
 
 
@@ -632,7 +658,7 @@ elif pagina == "📋 Histórico Geral":
 
 
 # =========================================================
-# DEMAIS MÓDULOS DE SUPORTE (EXCLUSÕES, ACESSOS, BACKUP)
+# DEMAIS MÓDULOS DE SUPORTE
 # =========================================================
 
 elif pagina == "🗑️ Excluir Colaborador" and st.session_state.perfil == "admin":
