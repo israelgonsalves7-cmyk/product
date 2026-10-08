@@ -11,7 +11,7 @@ import json
 # =========================================================
 
 st.set_page_config(
-    page_title="Gestão Unificada | Fleury & Work OS",
+    page_title="Gestão Unificada | Product & Work OS",
     page_icon="🧬",
     layout="wide",
     initial_sidebar_state="expanded"
